@@ -169,7 +169,8 @@ GASエディタの関数選択から、順に実行:
 
 ## 注意・既知の制約
 
-- **Slash Command の3秒制約**: GAS のコールドスタートが重い場合、Interaction 応答が間に合わないことがあります。重要な操作は Web App 側で完結させ、Bot は通知・軽量な照会に寄せる運用を推奨（仕様書の未決定事項）。
+- **Discord の egress 制約と Cloudflare Worker 中継**: GAS から Discord を直接叩くと一部ルートが `40333 internal network error` で弾かれることがあります。`worker/`（Cloudflare Worker）を立てて `DISCORD_PROXY_BASE` を設定すると、全送信が Worker 経由になり回避できます。あわせて Worker が Interactions の **ed25519 署名検証＋3秒 defer＋GAS委譲followup** を担うため、下記の3秒制約も解消します。詳細は [`worker/README.md`](worker/README.md)。
+- **Slash Command の3秒制約**: Discord は3秒以内の応答を要求し、GAS のコールドスタートでは間に合わないことがあります。**Worker 中継を使えば即 defer して解消**します（Worker 未使用時は重い操作を Web App 側に寄せる運用を推奨）。
 - **初回ロード**: Babel Standalone（約800KB）＋ React の CDN 読み込みで1〜2秒。Spinner／スケルトンで体感を補っています。
 - **`google.script.run` の遅延**: 1呼び出し1〜3秒。変化の少ないデータは `sessionStorage` キャッシュ等で呼び出し回数を抑える設計です。
 - スプレッドシートをそのまま DB に使うため、大量データ・高頻度アクセスには向きません（部活規模を想定）。

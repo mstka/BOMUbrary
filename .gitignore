@@ -9,6 +9,10 @@
 # node
 node_modules/
 
+# cloudflare wrangler
+.wrangler/
+.dev.vars
+
 # editor / OS
 .DS_Store
 .vscode/

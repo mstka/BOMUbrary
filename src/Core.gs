@@ -41,6 +41,9 @@ const Config = (function () {
     discordGuildId:     function () { return get('DISCORD_GUILD_ID'); },
     discordPublicKey:   function () { return get('DISCORD_PUBLIC_KEY'); },
     notifyChannelId:    function () { return get('NOTIFY_CHANNEL_ID'); },
+    // Cloudflare Worker 中継を使う場合のベースURL（例: https://xxx.workers.dev）と共有シークレット
+    discordProxyBase:   function () { return get('DISCORD_PROXY_BASE').replace(/\/+$/, ''); },
+    discordProxySecret: function () { return get('DISCORD_PROXY_SECRET'); },
     googleBooksApiKey:  function () { return get('GOOGLE_BOOKS_API_KEY'); },
     webappUrl:          function () { return get('WEBAPP_URL') || ScriptApp.getService().getUrl(); },
     adminDiscordIds:    function () {

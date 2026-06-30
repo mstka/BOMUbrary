@@ -15,16 +15,29 @@
  */
 
 const Discord = (function () {
-  const API = 'https://discord.com/api/v10';
   // Discord API は User-Agent を要求する。無いと Cloudflare に弾かれることがある。
   const USER_AGENT = 'DiscordBot (https://github.com/mstka/BOMUbrary, 1.0)';
 
-  function botHeaders() {
-    return {
+  /**
+   * API のベースURLを返す。DISCORD_PROXY_BASE が設定されていれば
+   * Cloudflare Worker 中継（GASのegress 40333 回避）を経由する。
+   * path は '/users/@me' のように '/api/v10' 以降を渡す。
+   */
+  function apiUrl(path) {
+    const base = Config.discordProxyBase() || 'https://discord.com';
+    return base + '/api/v10' + path;
+  }
+
+  /** Botリクエスト用ヘッダー。プロキシ使用時は共有シークレットを付与 */
+  function botHeaders(extra) {
+    const h = Object.assign({
       Authorization: 'Bot ' + Config.discordBotToken(),
       'Content-Type': 'application/json',
       'User-Agent': USER_AGENT,
-    };
+    }, extra || {});
+    const secret = Config.discordProxySecret();
+    if (Config.discordProxyBase() && secret) h['X-Proxy-Secret'] = secret;
+    return h;
   }
 
   /** 指定メンバーにDM送信（member_id を受け取り discord_id を解決） */
@@ -36,7 +49,7 @@ const Discord = (function () {
       if (!member || !member.discord_id) return false;
 
       // DMチャンネルを開く
-      const dmRes = UrlFetchApp.fetch(API + '/users/@me/channels', {
+      const dmRes = UrlFetchApp.fetch(apiUrl('/users/@me/channels'), {
         method: 'post',
         headers: botHeaders(),
         muteHttpExceptions: true,
@@ -60,7 +73,7 @@ const Discord = (function () {
 
   function sendToChannel(channelId, content) {
     try {
-      const res = UrlFetchApp.fetch(API + '/channels/' + channelId + '/messages', {
+      const res = UrlFetchApp.fetch(apiUrl('/channels/' + channelId + '/messages'), {
         method: 'post',
         headers: botHeaders(),
         muteHttpExceptions: true,
@@ -79,35 +92,48 @@ const Discord = (function () {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
+  // ephemeral / linkButton は「メッセージdataオブジェクト」を返す。
+  // Worker 委譲時はそのまま followup 本文に、直接応答時は {type:4, data} に包む。
   function ephemeral(content) {
-    return jsonResponse({ type: 4, data: { content: content, flags: 64 } });
+    return { content: content, flags: 64 };
   }
 
   function linkButton(content, label, url) {
-    return jsonResponse({
-      type: 4,
-      data: {
-        content: content,
-        flags: 64,
-        components: [{
-          type: 1,
-          components: [{ type: 2, style: 5, label: label, url: url }],
-        }],
-      },
-    });
+    return {
+      content: content,
+      flags: 64,
+      components: [{
+        type: 1,
+        components: [{ type: 2, style: 5, label: label, url: url }],
+      }],
+    };
   }
 
-  /** doPost から呼ばれる。Discord Interactions Webhook を処理 */
+  function safeCommand(interaction) {
+    try { return handleCommand(interaction); }
+    catch (err) { return ephemeral('エラー: ' + err.message); }
+  }
+
+  /**
+   * doPost から呼ばれる Interactions 処理。2系統に対応:
+   *  (1) Worker 委譲: {type:'interaction', secret, interaction} → 本文dataを {data} で返す
+   *      （署名検証・3秒defer は Worker 側が担当。GASは本文生成に専念）
+   *  (2) 直接 Discord: 生の Interaction → PING応答 / {type:4,data} を返す（Worker未使用時）
+   */
   function handleInteraction(e) {
     if (!e || !e.postData) return jsonResponse({ type: 1 });
     const body = JSON.parse(e.postData.contents);
 
-    // PING（type 1）には PONG
+    // (1) Worker からの委譲
+    if (body && body.type === 'interaction' && body.interaction) {
+      const secret = Config.discordProxySecret();
+      if (secret && body.secret !== secret) return jsonResponse({ error: 'forbidden' });
+      return jsonResponse({ data: safeCommand(body.interaction) });
+    }
+
+    // (2) 直接 Discord（フォールバック）
     if (body.type === 1) return jsonResponse({ type: 1 });
-
-    // Application Command（type 2）
-    if (body.type === 2) return handleCommand(body);
-
+    if (body.type === 2) return jsonResponse({ type: 4, data: safeCommand(body) });
     return jsonResponse({ type: 1 });
   }
 
@@ -305,6 +331,8 @@ const Discord = (function () {
     notifyChannel: notifyChannel,
     sendToChannel: sendToChannel,
     handleInteraction: handleInteraction,
+    apiUrl: apiUrl,
+    botHeaders: botHeaders,
   };
 })();
 
@@ -329,11 +357,10 @@ function registerSlashCommands() {
     throw new Error('DISCORD_CLIENT_ID / DISCORD_GUILD_ID / DISCORD_BOT_TOKEN を設定してください。');
   }
 
-  const UA = 'DiscordBot (https://github.com/mstka/BOMUbrary, 1.0)';
-
   // 事前検証: Botトークンが有効で、DISCORD_CLIENT_ID と同じアプリのものか確認
-  const appRes = UrlFetchApp.fetch('https://discord.com/api/v10/applications/@me', {
-    headers: { Authorization: 'Bot ' + token, 'User-Agent': UA }, muteHttpExceptions: true,
+  // （DISCORD_PROXY_BASE 設定時は Cloudflare Worker 中継経由で 40333 を回避）
+  const appRes = UrlFetchApp.fetch(Discord.apiUrl('/applications/@me'), {
+    headers: Discord.botHeaders(), muteHttpExceptions: true,
   });
   if (appRes.getResponseCode() === 401) {
     throw new Error('DISCORD_BOT_TOKEN が無効です。Developer Portal の Bot → Reset Token で取り直してください。');
@@ -393,11 +420,10 @@ function registerSlashCommands() {
     },
   ];
 
-  const url = 'https://discord.com/api/v10/applications/' + appId + '/guilds/' + guildId + '/commands';
+  const url = Discord.apiUrl('/applications/' + appId + '/guilds/' + guildId + '/commands');
   const options = {
     method: 'put', // 一括上書き登録
-    contentType: 'application/json',
-    headers: { Authorization: 'Bot ' + token, 'User-Agent': UA },
+    headers: Discord.botHeaders(),
     payload: JSON.stringify(commands),
     muteHttpExceptions: true,
   };
@@ -453,14 +479,12 @@ function discordDiagnostics() {
   const token = Config.discordBotToken();
   const appId = Config.discordClientId();
   const guildId = Config.discordGuildId();
-  const UA = 'DiscordBot (https://github.com/mstka/BOMUbrary, 1.0)';
   if (!token) { Logger.log('DISCORD_BOT_TOKEN 未設定'); return 'NG: token未設定'; }
 
-  function probe(label, url) {
+  function probe(label, path) {
     try {
-      const res = UrlFetchApp.fetch(url, {
-        headers: { Authorization: 'Bot ' + token, 'User-Agent': UA },
-        muteHttpExceptions: true,
+      const res = UrlFetchApp.fetch(Discord.apiUrl(path), {
+        headers: Discord.botHeaders(), muteHttpExceptions: true,
       });
       const code = res.getResponseCode();
       let snippet = res.getContentText();
@@ -474,22 +498,23 @@ function discordDiagnostics() {
   }
 
   Logger.log('=== Discord 診断開始 ===');
+  Logger.log('経路: ' + (Config.discordProxyBase() ? 'Worker中継(' + Config.discordProxyBase() + ')' : '直接 discord.com'));
   Logger.log('token長: ' + token.length + ' / 末尾空白: ' + /\s$/.test(token));
   Logger.log('CLIENT_ID: ' + appId + ' / GUILD_ID: ' + guildId);
-  const a = probe('1. users/@me（Bot本体）', API_BASE() + '/users/@me');
-  const b = probe('2. applications/@me（アプリ）', API_BASE() + '/applications/@me');
-  const c = probe('3. guilds/{guild}（参加確認）', API_BASE() + '/guilds/' + guildId);
+  const a = probe('1. users/@me（Bot本体）', '/users/@me');
+  const b = probe('2. applications/@me（アプリ）', '/applications/@me');
+  const c = probe('3. guilds/{guild}（参加確認）', '/guilds/' + guildId);
   const d = probe('4. guild commands（読み取り）',
-    API_BASE() + '/applications/' + appId + '/guilds/' + guildId + '/commands');
+    '/applications/' + appId + '/guilds/' + guildId + '/commands');
   Logger.log('=== 診断終了 ===');
 
   if ([a, b, c, d].every(function (x) { return x === 403 || x === -1; })) {
-    return '全リクエストが拒否されています。GASのegress IPがDiscord側で一時ブロックされている可能性大。時間をおく/手元のPCからの登録（curl）を検討してください。';
+    return Config.discordProxyBase()
+      ? '全リクエストが拒否されています。Worker中継の設定（PROXY_SECRET一致・Workerデプロイ）を確認してください。'
+      : '全リクエストが拒否されています。GASのegress IPがDiscord側でブロックされている可能性大。Worker中継の利用を検討してください。';
   }
   if (c === 403 || c === 404) {
     return 'Botが対象サーバー(GUILD_ID)に参加していない可能性があります。招待し直してください。';
   }
   return '診断完了。実行ログ（表示→ログ）を確認してください。';
 }
-
-function API_BASE() { return 'https://discord.com/api/v10'; }
