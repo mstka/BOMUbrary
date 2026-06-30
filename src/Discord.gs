@@ -326,6 +326,21 @@ function registerSlashCommands() {
     throw new Error('DISCORD_CLIENT_ID / DISCORD_GUILD_ID / DISCORD_BOT_TOKEN を設定してください。');
   }
 
+  // 事前検証: Botトークンが有効で、DISCORD_CLIENT_ID と同じアプリのものか確認
+  const appRes = UrlFetchApp.fetch('https://discord.com/api/v10/applications/@me', {
+    headers: { Authorization: 'Bot ' + token }, muteHttpExceptions: true,
+  });
+  if (appRes.getResponseCode() === 401) {
+    throw new Error('DISCORD_BOT_TOKEN が無効です。Developer Portal の Bot → Reset Token で取り直してください。');
+  }
+  if (appRes.getResponseCode() < 300) {
+    const app = JSON.parse(appRes.getContentText());
+    if (app.id && String(app.id) !== String(appId)) {
+      throw new Error('トークンのアプリID(' + app.id + ')と DISCORD_CLIENT_ID(' + appId
+        + ')が一致しません。同一アプリのものを設定してください。');
+    }
+  }
+
   const SUB = 1;      // SUB_COMMAND
   const STRING = 3;   // STRING option
   const USER = 6;     // USER option
@@ -374,14 +389,51 @@ function registerSlashCommands() {
   ];
 
   const url = 'https://discord.com/api/v10/applications/' + appId + '/guilds/' + guildId + '/commands';
-  const res = UrlFetchApp.fetch(url, {
+  const options = {
     method: 'put', // 一括上書き登録
     contentType: 'application/json',
     headers: { Authorization: 'Bot ' + token },
     payload: JSON.stringify(commands),
     muteHttpExceptions: true,
-  });
-  Logger.log(res.getResponseCode() + ': ' + res.getContentText());
-  if (res.getResponseCode() >= 300) throw new Error('登録に失敗: ' + res.getContentText());
-  return 'Slash Commands を登録しました。';
+  };
+
+  // 一時的エラー（Discord内部エラー code:40333 / 5xx / レート制限）はリトライ
+  let code = 0;
+  let body = '';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = UrlFetchApp.fetch(url, options);
+    code = res.getResponseCode();
+    body = res.getContentText();
+    Logger.log('registerSlashCommands attempt ' + (attempt + 1) + ' → ' + code + ': ' + body);
+    if (code < 300) return 'Slash Commands を登録しました（' + commands.length + 'コマンド）。';
+
+    let errCode = 0;
+    try { errCode = (JSON.parse(body) || {}).code || 0; } catch (e) { /* ignore */ }
+    const transient = code >= 500 || code === 429 || errCode === 40333;
+    if (transient && attempt < 3) {
+      Utilities.sleep(1500 * Math.pow(2, attempt)); // 1.5s, 3s, 6s
+      continue;
+    }
+    break;
+  }
+
+  // 失敗時は原因の当たりを付けて投げる
+  let errCode2 = 0;
+  try { errCode2 = (JSON.parse(body) || {}).code || 0; } catch (e) { /* ignore */ }
+  let hint;
+  if (errCode2 === 40333) {
+    hint = 'Discord側の一時的な内部エラー（40333）です。数分おいて再実行してください。'
+      + '繰り返す場合は https://discordstatus.com も確認を。';
+  } else if (errCode2 === 50001 || code === 403) {
+    hint = 'Botがこのサーバーに「applications.commands」スコープで参加していない可能性があります。'
+      + 'OAuth2 → URL Generator で scope に bot と applications.commands を付けた招待URLから、'
+      + '対象サーバー（GUILD_ID=' + guildId + '）に追加し直してください。';
+  } else if (code === 401) {
+    hint = 'DISCORD_BOT_TOKEN が不正です。トークンを取り直してください。';
+  } else if (code === 404) {
+    hint = 'DISCORD_GUILD_ID または DISCORD_CLIENT_ID が間違っている可能性があります。';
+  } else {
+    hint = '設定値（CLIENT_ID / GUILD_ID / BOT_TOKEN）を再確認してください。';
+  }
+  throw new Error('登録に失敗（HTTP ' + code + '）。' + hint + '\n生レスポンス: ' + body);
 }
