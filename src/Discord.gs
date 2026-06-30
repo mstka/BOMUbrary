@@ -16,11 +16,14 @@
 
 const Discord = (function () {
   const API = 'https://discord.com/api/v10';
+  // Discord API は User-Agent を要求する。無いと Cloudflare に弾かれることがある。
+  const USER_AGENT = 'DiscordBot (https://github.com/mstka/BOMUbrary, 1.0)';
 
   function botHeaders() {
     return {
       Authorization: 'Bot ' + Config.discordBotToken(),
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
     };
   }
 
@@ -326,9 +329,11 @@ function registerSlashCommands() {
     throw new Error('DISCORD_CLIENT_ID / DISCORD_GUILD_ID / DISCORD_BOT_TOKEN を設定してください。');
   }
 
+  const UA = 'DiscordBot (https://github.com/mstka/BOMUbrary, 1.0)';
+
   // 事前検証: Botトークンが有効で、DISCORD_CLIENT_ID と同じアプリのものか確認
   const appRes = UrlFetchApp.fetch('https://discord.com/api/v10/applications/@me', {
-    headers: { Authorization: 'Bot ' + token }, muteHttpExceptions: true,
+    headers: { Authorization: 'Bot ' + token, 'User-Agent': UA }, muteHttpExceptions: true,
   });
   if (appRes.getResponseCode() === 401) {
     throw new Error('DISCORD_BOT_TOKEN が無効です。Developer Portal の Bot → Reset Token で取り直してください。');
@@ -392,7 +397,7 @@ function registerSlashCommands() {
   const options = {
     method: 'put', // 一括上書き登録
     contentType: 'application/json',
-    headers: { Authorization: 'Bot ' + token },
+    headers: { Authorization: 'Bot ' + token, 'User-Agent': UA },
     payload: JSON.stringify(commands),
     muteHttpExceptions: true,
   };
@@ -437,3 +442,54 @@ function registerSlashCommands() {
   }
   throw new Error('登録に失敗（HTTP ' + code + '）。' + hint + '\n生レスポンス: ' + body);
 }
+
+/**
+ * Discord 接続診断。複数エンドポイントを Bot トークンで叩き、各 HTTP ステータスを
+ * ログ出力する。すべて 40333 等で失敗すれば「GAS egress / Discordエッジ」レベルの
+ * 問題、コマンド系だけ失敗すればエンドポイント/権限の問題と切り分けられる。
+ * GASエディタで実行し、実行ログを確認すること。
+ */
+function discordDiagnostics() {
+  const token = Config.discordBotToken();
+  const appId = Config.discordClientId();
+  const guildId = Config.discordGuildId();
+  const UA = 'DiscordBot (https://github.com/mstka/BOMUbrary, 1.0)';
+  if (!token) { Logger.log('DISCORD_BOT_TOKEN 未設定'); return 'NG: token未設定'; }
+
+  function probe(label, url) {
+    try {
+      const res = UrlFetchApp.fetch(url, {
+        headers: { Authorization: 'Bot ' + token, 'User-Agent': UA },
+        muteHttpExceptions: true,
+      });
+      const code = res.getResponseCode();
+      let snippet = res.getContentText();
+      if (snippet.length > 200) snippet = snippet.slice(0, 200) + '…';
+      Logger.log(label + ' → HTTP ' + code + ' : ' + snippet);
+      return code;
+    } catch (e) {
+      Logger.log(label + ' → 例外: ' + e.message);
+      return -1;
+    }
+  }
+
+  Logger.log('=== Discord 診断開始 ===');
+  Logger.log('token長: ' + token.length + ' / 末尾空白: ' + /\s$/.test(token));
+  Logger.log('CLIENT_ID: ' + appId + ' / GUILD_ID: ' + guildId);
+  const a = probe('1. users/@me（Bot本体）', API_BASE() + '/users/@me');
+  const b = probe('2. applications/@me（アプリ）', API_BASE() + '/applications/@me');
+  const c = probe('3. guilds/{guild}（参加確認）', API_BASE() + '/guilds/' + guildId);
+  const d = probe('4. guild commands（読み取り）',
+    API_BASE() + '/applications/' + appId + '/guilds/' + guildId + '/commands');
+  Logger.log('=== 診断終了 ===');
+
+  if ([a, b, c, d].every(function (x) { return x === 403 || x === -1; })) {
+    return '全リクエストが拒否されています。GASのegress IPがDiscord側で一時ブロックされている可能性大。時間をおく/手元のPCからの登録（curl）を検討してください。';
+  }
+  if (c === 403 || c === 404) {
+    return 'Botが対象サーバー(GUILD_ID)に参加していない可能性があります。招待し直してください。';
+  }
+  return '診断完了。実行ログ（表示→ログ）を確認してください。';
+}
+
+function API_BASE() { return 'https://discord.com/api/v10'; }
