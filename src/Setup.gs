@@ -1,11 +1,12 @@
 /**
  * Setup.gs
  * 初期セットアップ用。GASエディタから setup() を一度実行すると、
- * Schema 定義に従って全シートを作成し、初期タグ・初期バッジを投入する。
+ * DB用スプレッドシートを用意し、Schema 定義に従って全シートを作成し、
+ * 初期タグ・初期バッジを投入する。
  */
 
 function setup() {
-  const ss = SheetDB.ss();
+  const ss = resolveOrCreateSpreadsheet();
 
   // 各シートを作成し、ヘッダー行を整える
   Object.keys(Schema).forEach(function (name) {
@@ -28,8 +29,32 @@ function setup() {
   seedBadges();
   seedAdmins();
 
-  Logger.log('セットアップ完了。Spreadsheet: ' + ss.getUrl());
-  return 'OK';
+  const url = ss.getUrl();
+  Logger.log('セットアップ完了。Spreadsheet: ' + url);
+  Logger.log('SPREADSHEET_ID = ' + ss.getId() + '（スクリプトプロパティに保存済み）');
+  return 'OK / ' + url;
+}
+
+/**
+ * DB用スプレッドシートを解決する。優先順位:
+ *   1. スクリプトプロパティ SPREADSHEET_ID があれば openById
+ *   2. コンテナバインド時はアクティブなスプレッドシート（IDを保存）
+ *   3. どちらも無ければ新規スプレッドシートを作成（IDを保存）
+ * いずれの場合も最終的に SPREADSHEET_ID をスクリプトプロパティへ書き込むので、
+ * Web App デプロイ後（getActiveSpreadsheet が使えない文脈）でも openById で参照できる。
+ */
+function resolveOrCreateSpreadsheet() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('SPREADSHEET_ID');
+  if (id) return SpreadsheetApp.openById(id);
+
+  let ss = null;
+  try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (e) { ss = null; }
+  if (!ss) {
+    ss = SpreadsheetApp.create('BOMUbrary DB');
+  }
+  props.setProperty('SPREADSHEET_ID', ss.getId());
+  return ss;
 }
 
 /** 初期タグ（仕様書の初期タグ例） */
