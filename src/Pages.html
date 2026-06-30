@@ -1,0 +1,1018 @@
+<script type="text/babel">
+// ═══════════════════════════════════════════════════════════════
+//  ページコンポーネント（Pages.html）
+// ═══════════════════════════════════════════════════════════════
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.getFullYear() + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + ('0' + d.getDate()).slice(-2);
+}
+
+// ─── Navbar ──────────────────────────────────────────────────────
+function Navbar({ currentPage, navigate, user }) {
+  const items = [
+    ['books', '本棚', 'library'],
+    ['lendings', '貸出', 'arrow-left-right'],
+    ['forum', '読書会', 'messages-square'],
+    ['requests', 'リクエスト', 'shopping-cart'],
+    ['mypage', 'マイページ', 'user'],
+  ];
+  if (user.role === 'admin') items.push(['admin', '管理', 'settings']);
+
+  return (
+    <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-gray-100">
+      <div className="max-w-5xl mx-auto px-4 flex items-center justify-between h-14">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('books')}>
+          <span className="text-brand-500"><Icon name="book-open" size={22} /></span>
+          <span className="font-bold text-brand-900">BOMUbrary</span>
+        </div>
+        <nav className="hidden md:flex items-center gap-1">
+          {items.map(([key, label, icon]) => (
+            <button key={key} onClick={() => navigate(key)}
+              className={'px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition ' +
+                (currentPage === key ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:bg-gray-50')}>
+              <Icon name={icon} size={16} />{label}
+            </button>
+          ))}
+        </nav>
+        <div className="flex items-center gap-2">
+          {user.on_penalty && <Pill color="red">借出停止中</Pill>}
+          <Avatar url={user.avatar_url} name={user.discord_username} size={30} />
+        </div>
+      </div>
+      {/* モバイル用ボトムナビ */}
+      <nav className="md:hidden flex items-center justify-around border-t border-gray-100 bg-white">
+        {items.map(([key, label, icon]) => (
+          <button key={key} onClick={() => navigate(key)}
+            className={'flex-1 py-2 flex flex-col items-center gap-0.5 text-[10px] ' +
+              (currentPage === key ? 'text-brand-600' : 'text-gray-400')}>
+            <Icon name={icon} size={18} />{label}
+          </button>
+        ))}
+      </nav>
+    </header>
+  );
+}
+
+// ─── LoginPage ───────────────────────────────────────────────────
+function LoginPage() {
+  const [authUrl, setAuthUrl] = React.useState('');
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    gasCall('getAuthUrl').then(setAuthUrl).catch(() => setError('認証URLの取得に失敗しました'));
+  }, []);
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-brand-50 to-white px-4">
+      <div className="text-brand-500 mb-4"><Icon name="book-open" size={48} /></div>
+      <h1 className="text-2xl font-bold text-brand-900 mb-1">起業部 本棚</h1>
+      <p className="text-gray-500 mb-8 text-sm">BOMUbrary — 部員みんなの本を貸し借り</p>
+      {authUrl ? (
+        <a href={authUrl} target="_top"
+          className="inline-flex items-center gap-2 bg-[#5865F2] text-white px-6 py-3 rounded-xl font-medium shadow-sm hover:opacity-90 transition">
+          <Icon name="log-in" size={18} />Discordでログイン
+        </a>
+      ) : (
+        <Spinner />
+      )}
+      {error && <p className="text-red-500 text-sm mt-4">{error}</p>}
+      <p className="text-xs text-gray-400 mt-8 text-center max-w-xs">
+        起業部 Discord サーバーのメンバーのみログインできます。
+      </p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BooksPage — 蔵書一覧・検索・フィルタ・登録
+// ═══════════════════════════════════════════════════════════════
+function BooksPage() {
+  const { navigate, showToast } = useApp();
+  const [books, setBooks] = React.useState(null);
+  const [tags, setTags] = React.useState([]);
+  const [q, setQ] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState('all');
+  const [tagFilter, setTagFilter] = React.useState(null);
+  const [showRegister, setShowRegister] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    gasCall('getBooks').then(setBooks).catch(() => showToast('蔵書の取得に失敗しました', 'error'));
+    gasCall('getTags').then(setTags).catch(() => {});
+  }, [showToast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  if (!books) return <ListSkeleton />;
+
+  const filtered = books.filter((b) => {
+    if (statusFilter !== 'all' && b.status !== statusFilter) return false;
+    if (tagFilter && !(b.tags || []).some((t) => t.tag_id === tagFilter)) return false;
+    if (q) {
+      const s = q.toLowerCase();
+      const inTags = (b.tags || []).some((t) => t.name.toLowerCase().includes(s));
+      if (!b.title.toLowerCase().includes(s) && !(b.author || '').toLowerCase().includes(s) && !inTags) return false;
+    }
+    return true;
+  });
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold">本棚 <span className="text-gray-400 text-sm font-normal">({books.length}冊)</span></h2>
+        <Button onClick={() => setShowRegister(true)}><Icon name="plus" size={16} />本を登録</Button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-2 mb-3">
+        <SearchBar value={q} onChange={setQ} placeholder="タイトル・著者・タグで検索" />
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white">
+          <option value="all">すべての状態</option>
+          <option value="available">空き</option>
+          <option value="lending">貸出中</option>
+        </select>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mb-5">
+        {tags.slice(0, 18).map((t) => (
+          <button key={t.tag_id} onClick={() => setTagFilter(tagFilter === t.tag_id ? null : t.tag_id)}
+            className={'px-2.5 py-1 rounded-full text-xs border ' +
+              (tagFilter === t.tag_id ? 'bg-brand-500 text-white border-brand-500' : 'bg-white text-gray-500 border-gray-200')}>
+            {t.name} {t.book_count > 0 && <span className="opacity-60">{t.book_count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState icon="book-x" title="該当する本がありません" hint="条件を変えるか、新しい本を登録してください" />
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {filtered.map((b) => (
+            <Card key={b.book_id} onClick={() => navigate('detail', { book: b.book_id })} className="overflow-hidden">
+              <div className="p-2">
+                <div className="relative">
+                  <BookCover url={b.cover_url} title={b.title} />
+                  <div className="absolute top-1.5 right-1.5"><StatusPill status={b.status} /></div>
+                </div>
+              </div>
+              <div className="px-3 pb-3">
+                <p className="font-medium text-sm line-clamp-2 leading-tight">{b.title}</p>
+                <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{b.author}</p>
+                {b.status === 'lending' && b.due_date &&
+                  <p className="text-[11px] text-yellow-600 mt-1">返却予定 {fmtDate(b.due_date)}</p>}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {showRegister &&
+        <RegisterBookModal tags={tags} onClose={() => setShowRegister(false)}
+          onDone={() => { setShowRegister(false); load(); }} onReloadTags={() => gasCall('getTags').then(setTags)} />}
+    </div>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+      {[1,2,3,4,5,6,7,8].map((i) => (
+        <div key={i} className="bg-white rounded-2xl p-2 border border-gray-100">
+          <div className="skeleton cover-ratio rounded-lg" />
+          <div className="skeleton h-3 rounded mt-2 mx-1" />
+          <div className="skeleton h-3 rounded mt-1.5 mx-1 w-2/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── 本登録モーダル ──────────────────────────────────────────────
+function RegisterBookModal({ tags, onClose, onDone, onReloadTags }) {
+  const { showToast } = useApp();
+  const [form, setForm] = React.useState({
+    title: '', author: '', publisher: '', isbn: '', cover_url: '',
+    page_count: '', condition: '良好', external_link: '',
+  });
+  const [selectedTags, setSelectedTags] = React.useState([]);
+  const [looking, setLooking] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [pending, setPending] = React.useState(false);
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const lookup = async () => {
+    if (!form.isbn) return showToast('ISBNを入力してください', 'error');
+    setLooking(true);
+    try {
+      const meta = await gasCall('lookupIsbn', form.isbn);
+      if (meta) {
+        setForm((f) => ({ ...f,
+          title: meta.title || f.title, author: meta.author || f.author,
+          publisher: meta.publisher || f.publisher, cover_url: meta.cover_url || f.cover_url,
+          page_count: meta.page_count || f.page_count }));
+        setPending(false);
+        showToast(meta.source + ' から書誌を取得しました');
+      } else {
+        setPending(true);
+        showToast('書誌が見つかりませんでした。手動入力で仮登録できます', 'info');
+      }
+    } catch (e) { showToast('取得に失敗しました', 'error'); }
+    finally { setLooking(false); }
+  };
+
+  const createTag = async (name) => {
+    const r = await gasCall('createTag', name);
+    await onReloadTags();
+    return r.tag_id;
+  };
+
+  const submit = async () => {
+    if (!form.title.trim()) return showToast('タイトルは必須です', 'error');
+    setSaving(true);
+    try {
+      await gasCall('registerBook', { ...form, page_count: Number(form.page_count) || 0,
+        pending_enrichment: pending, tagIds: selectedTags });
+      showToast('登録しました');
+      onDone();
+    } catch (e) { showToast(e.message || '登録に失敗しました', 'error'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="本を登録" wide
+      footer={<><Button variant="ghost" onClick={onClose}>キャンセル</Button>
+        <Button onClick={submit} loading={saving}>登録</Button></>}>
+      <Field label="ISBN（13桁）">
+        <div className="flex gap-2">
+          <TextInput value={form.isbn} onChange={(e) => set('isbn', e.target.value)} placeholder="9784..." />
+          <Button variant="secondary" onClick={lookup} loading={looking}>書誌取得</Button>
+        </div>
+        <p className="text-xs text-gray-400 mt-1">NDL → Google Books の順で自動取得します</p>
+      </Field>
+      <Field label="タイトル" required>
+        <TextInput value={form.title} onChange={(e) => set('title', e.target.value)} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="著者"><TextInput value={form.author} onChange={(e) => set('author', e.target.value)} /></Field>
+        <Field label="出版社"><TextInput value={form.publisher} onChange={(e) => set('publisher', e.target.value)} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="ページ数"><TextInput type="number" value={form.page_count} onChange={(e) => set('page_count', e.target.value)} /></Field>
+        <Field label="コンディション">
+          <select value={form.condition} onChange={(e) => set('condition', e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            {['新品', '良好', '使用感あり', 'メモ書きあり'].map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="表紙画像URL"><TextInput value={form.cover_url} onChange={(e) => set('cover_url', e.target.value)} /></Field>
+      <Field label="外部リンク（Amazon等）"><TextInput value={form.external_link} onChange={(e) => set('external_link', e.target.value)} /></Field>
+      <Field label="タグ">
+        <TagSelector allTags={tags} selected={selectedTags} onChange={setSelectedTags} onCreate={createTag} />
+      </Field>
+      {pending && <p className="text-xs text-yellow-600 bg-yellow-50 rounded-lg p-2">書誌が取得できなかったため、仮登録（pending_enrichment）になります。毎日のcronで自動補完を試みます。</p>}
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BookDetailPage — 詳細・履歴・レビュー・読書会・バトン
+// ═══════════════════════════════════════════════════════════════
+function BookDetailPage() {
+  const { user, navigate, route, showToast } = useApp();
+  const bookId = route.query.book;
+  const [book, setBook] = React.useState(null);
+  const [tab, setTab] = React.useState('info');
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    if (!bookId) return;
+    gasCall('getBookById', bookId).then(setBook).catch(() => showToast('本が見つかりません', 'error'));
+  }, [bookId, showToast]);
+  React.useEffect(() => { load(); }, [load]);
+
+  if (!book) return <LoadingScreen />;
+
+  const cur = book.current_lending;
+  const isOwner = book.owner_id === user.member_id;
+  const iAmBorrower = cur && cur.borrower_id === user.member_id;
+  const inWaitlist = (book.waitlist || []).some((w) => w.member_id === user.member_id);
+  const pendingRequest = (book.history || []).some((h) => h.status === 'requested' && h.borrower_id === user.member_id);
+
+  const act = async (fn, ...args) => {
+    setBusy(true);
+    try { const r = await gasCall(fn, ...args); load(); return r; }
+    catch (e) { showToast(e.message || '操作に失敗しました', 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <button onClick={() => navigate('books')} className="text-sm text-gray-500 mb-3 flex items-center gap-1 hover:text-gray-700">
+        <Icon name="arrow-left" size={16} />本棚へ戻る
+      </button>
+
+      <div className="flex flex-col sm:flex-row gap-5 mb-6">
+        <div className="w-40 shrink-0 mx-auto sm:mx-0">
+          <BookCover url={book.cover_url} title={book.title} />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-start gap-2 mb-1">
+            <h2 className="text-2xl font-bold flex-1">{book.title}</h2>
+            <StatusPill status={book.status} />
+          </div>
+          <p className="text-gray-500">{book.author}</p>
+          <p className="text-sm text-gray-400 mt-0.5">{book.publisher} {book.page_count ? '・' + book.page_count + 'ページ' : ''}</p>
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {(book.tags || []).map((t) => <Pill key={t.tag_id} color="brand">{t.name}</Pill>)}
+          </div>
+          <div className="mt-3 text-sm text-gray-500 space-y-1">
+            <p>登録者: {book.owner_name}</p>
+            {book.condition && <p>コンディション: {book.condition}</p>}
+            {cur && <p className="text-yellow-600">貸出中: {cur.borrower_name}（返却予定 {fmtDate(cur.due_date)}）</p>}
+          </div>
+
+          {/* アクション */}
+          <div className="flex flex-wrap gap-2 mt-4">
+            {book.status === 'available' && !isOwner && !pendingRequest &&
+              <Button onClick={() => act('requestLend', bookId).then((r)=> r && showToast('貸出申請を送りました'))} loading={busy}>
+                <Icon name="hand" size={16} />借りる（申請）
+              </Button>}
+            {pendingRequest && <Pill color="yellow">申請中（オーナー承認待ち）</Pill>}
+
+            {book.status === 'lending' && !iAmBorrower && !inWaitlist &&
+              <Button variant="secondary" onClick={() => act('joinWaitlist', bookId).then((r)=> r && showToast('待ちリストに登録しました'))} loading={busy}>
+                <Icon name="clock" size={16} />待ちリストに登録
+              </Button>}
+            {inWaitlist &&
+              <Button variant="ghost" onClick={() => act('leaveWaitlist', bookId)}>待ちリスト解除</Button>}
+
+            {iAmBorrower && <>
+              <Button variant="secondary" onClick={() => act('requestExtension', cur.lending_id).then((r)=> r && showToast('延長申請を送りました'))} loading={busy}>延長申請</Button>
+              <ReturnButton lendingId={cur.lending_id} onDone={load} />
+            </>}
+
+            {book.external_link &&
+              <a href={book.external_link} target="_blank" rel="noopener"
+                className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100">
+                <Icon name="external-link" size={16} />関連リンク
+              </a>}
+          </div>
+
+          {/* オーナー: 承認待ちリスト */}
+          {isOwner && (book.history || []).some((h) => h.status === 'requested') &&
+            <div className="mt-4 bg-brand-50 rounded-xl p-3">
+              <p className="text-sm font-medium text-brand-900 mb-2">貸出申請</p>
+              {(book.history || []).filter((h) => h.status === 'requested').map((h) => (
+                <div key={h.lending_id} className="flex items-center justify-between py-1">
+                  <span className="text-sm">{h.borrower_name}</span>
+                  <Button onClick={() => act('approveLend', bookId, h.borrower_id).then((r)=> r && showToast('承認しました'))} loading={busy}>承認</Button>
+                </div>
+              ))}
+            </div>}
+
+          {/* オーナー: 延長承認 */}
+          {isOwner && cur && cur.status === 'extension_requested' &&
+            <div className="mt-3 bg-yellow-50 rounded-xl p-3 flex items-center justify-between">
+              <span className="text-sm">{cur.borrower_name} さんが延長を希望しています</span>
+              <div className="flex gap-2">
+                <Button onClick={() => act('decideExtension', cur.lending_id, true).then((r)=> r && showToast('延長を承認しました'))}>承認</Button>
+                <Button variant="ghost" onClick={() => act('decideExtension', cur.lending_id, false)}>拒否</Button>
+              </div>
+            </div>}
+        </div>
+      </div>
+
+      {/* タブ */}
+      <div className="flex gap-1 border-b border-gray-100 mb-4 overflow-x-auto">
+        {[['info','詳細・履歴'],['reviews','レビュー'],['forum','読書会'],['baton','バトン']].map(([k,l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={'px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ' +
+              (tab === k ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-400')}>{l}</button>
+        ))}
+      </div>
+
+      {tab === 'info' && <HistoryTab book={book} />}
+      {tab === 'reviews' && <ReviewsTab bookId={bookId} />}
+      {tab === 'forum' && <ForumTab book={book} onReadMark={load} />}
+      {tab === 'baton' && <BatonTab book={book} onDone={load} />}
+    </div>
+  );
+}
+
+function ReturnButton({ lendingId, onDone }) {
+  const { showToast } = useApp();
+  const [open, setOpen] = React.useState(false);
+  const [condition, setCondition] = React.useState('良好');
+  const [busy, setBusy] = React.useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await gasCall('returnBook', lendingId, condition);
+      showToast('返却を報告しました');
+      setOpen(false); onDone();
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return <>
+    <Button onClick={() => setOpen(true)}><Icon name="undo-2" size={16} />返却する</Button>
+    <Modal open={open} onClose={() => setOpen(false)} title="返却報告"
+      footer={<><Button variant="ghost" onClick={() => setOpen(false)}>キャンセル</Button>
+        <Button onClick={submit} loading={busy}>返却を確定</Button></>}>
+      <Field label="返却時のコンディション">
+        <select value={condition} onChange={(e) => setCondition(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+          {['新品同様', '良好', '使用感あり', 'メモ書きあり', '傷み・破損あり'].map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </Field>
+      <p className="text-xs text-gray-400">返却後、読了マークを付けると読書会スレッドに参加できます。</p>
+    </Modal>
+  </>;
+}
+
+function HistoryTab({ book }) {
+  if (!book.history || !book.history.length) return <EmptyState icon="history" title="貸出履歴はまだありません" />;
+  return (
+    <div className="space-y-2">
+      {book.waitlist && book.waitlist.length > 0 &&
+        <Card className="p-3 mb-3">
+          <p className="text-sm font-medium mb-1">待ちリスト</p>
+          <div className="flex flex-wrap gap-1.5">
+            {book.waitlist.map((w, i) => <Pill key={w.member_id}>{i + 1}. {w.member_name}</Pill>)}
+          </div>
+        </Card>}
+      {book.history.filter((h) => h.status !== 'requested').map((h) => (
+        <Card key={h.lending_id} className="p-3 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">{h.borrower_name}</p>
+            <p className="text-xs text-gray-400">
+              {fmtDate(h.lent_at)} 〜 {h.returned_at ? fmtDate(h.returned_at) : '貸出中'}
+              {h.return_condition ? '・' + h.return_condition : ''}
+            </p>
+          </div>
+          {h.status === 'read' && <Pill color="green">読了</Pill>}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ─── レビュータブ ────────────────────────────────────────────────
+function ReviewsTab({ bookId }) {
+  const { showToast } = useApp();
+  const [reviews, setReviews] = React.useState(null);
+  const [open, setOpen] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    gasCall('getReviews', bookId).then(setReviews).catch(() => {});
+  }, [bookId]);
+  React.useEffect(() => { load(); }, [load]);
+
+  if (!reviews) return <LoadingScreen />;
+  return (
+    <div>
+      <div className="flex justify-end mb-3">
+        <Button onClick={() => setOpen(true)}><Icon name="pen-line" size={16} />レビューを書く</Button>
+      </div>
+      {reviews.length === 0 ? <EmptyState icon="message-square" title="まだレビューがありません" /> :
+        <div className="space-y-3">
+          {reviews.map((r) => (
+            <Card key={r.review_id} className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Avatar url={r.avatar_url} name={r.member_name} size={28} />
+                <span className="text-sm font-medium">{r.member_name}</span>
+                <StarRating value={r.stars} readOnly size={16} />
+                <span className="text-xs text-gray-300 ml-auto">{fmtDate(r.posted_at)}</span>
+              </div>
+              <p className="text-sm whitespace-pre-wrap">{r.comment}</p>
+              <div className="mt-2 space-y-1 text-xs text-gray-500">
+                {r.read_timing && <p>📖 読むタイミング: {r.read_timing}</p>}
+                {r.recommended_chapter && <p>🔖 おすすめ章: {r.recommended_chapter}</p>}
+                {r.for_whom && <p>🎯 こんな人に: {r.for_whom}</p>}
+                {r.pair_book && <p>🔗 組み合わせ: {r.pair_book}</p>}
+                {r.applied_to && <p>💡 活かした点: {r.applied_to}</p>}
+              </div>
+            </Card>
+          ))}
+        </div>}
+      {open && <ReviewModal bookId={bookId} onClose={() => setOpen(false)} onDone={() => { setOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+function ReviewModal({ bookId, onClose, onDone }) {
+  const { showToast } = useApp();
+  const [form, setForm] = React.useState({ stars: 0, comment: '', read_timing: '', recommended_chapter: '', for_whom: '', pair_book: '', applied_to: '' });
+  const [busy, setBusy] = React.useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const submit = async () => {
+    if (!form.stars) return showToast('星評価は必須です', 'error');
+    if (!form.comment.trim()) return showToast('ひとこと感想は必須です', 'error');
+    setBusy(true);
+    try { await gasCall('postReview', { ...form, book_id: bookId }); showToast('投稿しました'); onDone(); }
+    catch (e) { showToast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title="レビューを書く" wide
+      footer={<><Button variant="ghost" onClick={onClose}>キャンセル</Button><Button onClick={submit} loading={busy}>投稿</Button></>}>
+      <Field label="星評価" required><StarRating value={form.stars} onChange={(v) => set('stars', v)} size={28} /></Field>
+      <Field label="ひとこと感想" required><TextArea rows={3} value={form.comment} onChange={(e) => set('comment', e.target.value)} /></Field>
+      <Field label="読むタイミング（起業フェーズ）"><TextInput value={form.read_timing} onChange={(e) => set('read_timing', e.target.value)} placeholder="例: PMF探索期に" /></Field>
+      <Field label="おすすめ章"><TextInput value={form.recommended_chapter} onChange={(e) => set('recommended_chapter', e.target.value)} placeholder="例: 第3章だけでも読む価値あり" /></Field>
+      <Field label="こんな人におすすめ"><TextInput value={form.for_whom} onChange={(e) => set('for_whom', e.target.value)} /></Field>
+      <Field label="組み合わせおすすめ本"><TextInput value={form.pair_book} onChange={(e) => set('pair_book', e.target.value)} /></Field>
+      <Field label="自分のプロジェクトへの活かし方"><TextArea rows={2} value={form.applied_to} onChange={(e) => set('applied_to', e.target.value)} /></Field>
+    </Modal>
+  );
+}
+
+// ─── 読書会タブ ──────────────────────────────────────────────────
+function ForumTab({ book, onReadMark }) {
+  const { user, showToast } = useApp();
+  const [posts, setPosts] = React.useState(null);
+  const [content, setContent] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    gasCall('getForumPosts', book.book_id).then(setPosts).catch(() => {});
+  }, [book.book_id]);
+  React.useEffect(() => { load(); }, [load]);
+
+  // 自分が読了済みか（履歴から判定）
+  const myRead = (book.history || []).some((h) => h.borrower_id === user.member_id && h.status === 'read');
+  const myReturnedUnread = (book.history || []).find((h) => h.borrower_id === user.member_id && h.status === 'returned');
+
+  const post = async () => {
+    if (!content.trim()) return;
+    setBusy(true);
+    try { await gasCall('postForum', book.book_id, content); setContent(''); showToast('投稿しました'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const markRead = async () => {
+    try { await gasCall('markAsRead', myReturnedUnread.lending_id); showToast('読了マークを付けました'); onReadMark(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  if (!posts) return <LoadingScreen />;
+  return (
+    <div>
+      {!myRead && myReturnedUnread &&
+        <Card className="p-3 mb-3 bg-brand-50 flex items-center justify-between">
+          <span className="text-sm">読了マークを付けると読書会に参加できます</span>
+          <Button onClick={markRead}><Icon name="check" size={16} />読了マーク</Button>
+        </Card>}
+
+      {posts.length === 0 ? <EmptyState icon="messages-square" title="まだ投稿がありません" hint="読了者同士で語り合いましょう" /> :
+        <div className="space-y-3 mb-4">
+          {posts.map((p) => (
+            <Card key={p.post_id} className="p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Avatar url={p.avatar_url} name={p.member_name} size={24} />
+                <span className="text-sm font-medium">{p.member_name}</span>
+                <span className="text-xs text-gray-300 ml-auto">{fmtDate(p.posted_at)}</span>
+              </div>
+              <p className="text-sm whitespace-pre-wrap">{p.content}</p>
+            </Card>
+          ))}
+        </div>}
+
+      {myRead ?
+        <div className="flex gap-2">
+          <TextInput value={content} onChange={(e) => setContent(e.target.value)} placeholder="読書会に投稿..." />
+          <Button onClick={post} loading={busy}>投稿</Button>
+        </div>
+        : <p className="text-xs text-gray-400 text-center">読了マークが付いた人のみ投稿できます。</p>}
+    </div>
+  );
+}
+
+// ─── バトンタブ ──────────────────────────────────────────────────
+function BatonTab({ book, onDone }) {
+  const { showToast } = useApp();
+  const [history, setHistory] = React.useState(null);
+  const [members, setMembers] = React.useState([]);
+  const [open, setOpen] = React.useState(false);
+  const [to, setTo] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    gasCall('getBatonHistory', book.book_id).then(setHistory).catch(() => {});
+    gasCall('getMembers').then(setMembers).catch(() => {});
+  }, [book.book_id]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const pass = async () => {
+    if (!to) return showToast('指名先を選んでください', 'error');
+    setBusy(true);
+    try { await gasCall('passBaton', book.book_id, to, msg); showToast('バトンを渡しました'); setOpen(false); setMsg(''); setTo(''); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  if (!history) return <LoadingScreen />;
+  return (
+    <div>
+      <div className="flex justify-end mb-3"><Button onClick={() => setOpen(true)}><Icon name="send" size={16} />次の人を指名</Button></div>
+      {history.length === 0 ? <EmptyState icon="users" title="まだバトンは渡されていません" /> :
+        <div className="space-y-2">
+          {history.map((b) => (
+            <Card key={b.baton_id} className="p-3">
+              <p className="text-sm"><span className="font-medium">{b.from_name}</span>
+                <span className="text-gray-400 mx-1">→</span>
+                <span className="font-medium">{b.to_name}</span></p>
+              {b.message && <p className="text-xs text-gray-500 mt-1">💬 {b.message}</p>}
+              <p className="text-[11px] text-gray-300 mt-1">{fmtDate(b.created_at)}</p>
+            </Card>
+          ))}
+        </div>}
+      <Modal open={open} onClose={() => setOpen(false)} title="次の読み手を指名"
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>キャンセル</Button><Button onClick={pass} loading={busy}>指名する</Button></>}>
+        <Field label="指名する部員" required>
+          <select value={to} onChange={(e) => setTo(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="">選択してください</option>
+            {members.map((m) => <option key={m.member_id} value={m.member_id}>{m.discord_username}</option>)}
+          </select>
+        </Field>
+        <Field label="指名コメント"><TextArea rows={2} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="この本を勧める理由..." /></Field>
+      </Modal>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LendingsPage — 自分の貸し借り管理
+// ═══════════════════════════════════════════════════════════════
+function LendingsPage() {
+  const { navigate } = useApp();
+  const [mp, setMp] = React.useState(null);
+  React.useEffect(() => { gasCall('getMyPage').then(setMp).catch(() => {}); }, []);
+  if (!mp) return <LoadingScreen />;
+  return (
+    <div>
+      <h2 className="text-xl font-bold mb-4">貸出状況</h2>
+      <h3 className="text-sm font-semibold text-gray-500 mb-2">借り中の本</h3>
+      {mp.borrowing.length === 0 ? <EmptyState icon="book" title="借りている本はありません" /> :
+        <div className="space-y-2 mb-6">
+          {mp.borrowing.map((b) => (
+            <Card key={b.lending_id} onClick={() => navigate('detail', { book: b.book_id })} className="p-3 flex items-center gap-3">
+              <div className="w-10 shrink-0"><BookCover url={b.cover_url} title={b.title} /></div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">{b.title}</p>
+                <p className={'text-xs ' + (b.overdue ? 'text-red-500 font-medium' : 'text-gray-400')}>
+                  返却期限 {fmtDate(b.due_date)} {b.overdue ? '（遅延中）' : ''} {b.extended ? '・延長済' : ''}
+                </p>
+              </div>
+              <Icon name="chevron-right" className="text-gray-300" />
+            </Card>
+          ))}
+        </div>}
+      <p className="text-sm text-gray-400">貸出申請の承認・延長承認は、各本の詳細ページから行えます。</p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RequestsPage — 購入リクエスト
+// ═══════════════════════════════════════════════════════════════
+function RequestsPage() {
+  const { user, showToast } = useApp();
+  const [reqs, setReqs] = React.useState(null);
+  const [open, setOpen] = React.useState(false);
+
+  const load = React.useCallback(() => { gasCall('getRequests').then(setReqs).catch(() => {}); }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const vote = async (id) => {
+    try { const r = await gasCall('voteRequest', id); showToast('投票しました（' + r.vote_count + '票）'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+  const decide = async (id, action) => {
+    try { await gasCall('decideRequest', id, action); showToast(action === 'purchased' ? '購入済みにしました' : '却下しました'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  if (!reqs) return <LoadingScreen />;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold">購入リクエスト</h2>
+        <Button onClick={() => setOpen(true)}><Icon name="plus" size={16} />リクエスト</Button>
+      </div>
+      {reqs.length === 0 ? <EmptyState icon="shopping-cart" title="リクエストはまだありません" /> :
+        <div className="space-y-3">
+          {reqs.map((r) => (
+            <Card key={r.request_id} className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex flex-col items-center">
+                  <button onClick={() => vote(r.request_id)} disabled={r.status !== 'open'}
+                    className="flex flex-col items-center text-brand-500 disabled:text-gray-300">
+                    <Icon name="chevron-up" size={20} />
+                    <span className="text-sm font-bold">{r.vote_count}</span>
+                  </button>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">{r.title}</p>
+                    {r.status === 'purchased' && <Pill color="green">購入済み</Pill>}
+                    {r.status === 'rejected' && <Pill color="gray">見送り</Pill>}
+                  </div>
+                  {r.author && <p className="text-xs text-gray-400">{r.author}</p>}
+                  <p className="text-sm text-gray-600 mt-1">{r.reason}</p>
+                  <p className="text-[11px] text-gray-300 mt-1">{r.requester_name}・{fmtDate(r.requested_at)}</p>
+                  {user.role === 'admin' && r.status === 'open' &&
+                    <div className="flex gap-2 mt-2">
+                      <Button onClick={() => decide(r.request_id, 'purchased')}>購入済みにする</Button>
+                      <Button variant="ghost" onClick={() => decide(r.request_id, 'rejected')}>却下</Button>
+                    </div>}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>}
+      {open && <RequestModal onClose={() => setOpen(false)} onDone={() => { setOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+function RequestModal({ onClose, onDone }) {
+  const { showToast } = useApp();
+  const [form, setForm] = React.useState({ title: '', author: '', isbn: '', reason: '' });
+  const [busy, setBusy] = React.useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const submit = async () => {
+    if (!form.title.trim()) return showToast('タイトルは必須です', 'error');
+    if (!form.reason.trim()) return showToast('理由は必須です', 'error');
+    setBusy(true);
+    try { await gasCall('addRequest', form); showToast('投稿しました'); onDone(); }
+    catch (e) { showToast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title="購入リクエスト"
+      footer={<><Button variant="ghost" onClick={onClose}>キャンセル</Button><Button onClick={submit} loading={busy}>投稿</Button></>}>
+      <Field label="タイトル" required><TextInput value={form.title} onChange={(e) => set('title', e.target.value)} /></Field>
+      <Field label="著者"><TextInput value={form.author} onChange={(e) => set('author', e.target.value)} /></Field>
+      <Field label="ISBN"><TextInput value={form.isbn} onChange={(e) => set('isbn', e.target.value)} /></Field>
+      <Field label="読みたい理由" required><TextArea rows={3} value={form.reason} onChange={(e) => set('reason', e.target.value)} /></Field>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ForumPage — 読了した本の読書会一覧
+// ═══════════════════════════════════════════════════════════════
+function ForumPage() {
+  const { navigate } = useApp();
+  const [mp, setMp] = React.useState(null);
+  React.useEffect(() => { gasCall('getMyPage').then(setMp).catch(() => {}); }, []);
+  if (!mp) return <LoadingScreen />;
+  return (
+    <div>
+      <h2 className="text-xl font-bold mb-1">読書会スレッド</h2>
+      <p className="text-sm text-gray-400 mb-4">読了した本のスレッドに参加できます。</p>
+      {mp.readList.length === 0 ?
+        <EmptyState icon="messages-square" title="読了した本がまだありません" hint="本を借りて読了マークを付けると参加できます" /> :
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {mp.readList.map((b) => (
+            <Card key={b.book_id} onClick={() => navigate('detail', { book: b.book_id })} className="p-2">
+              <BookCover url={b.cover_url} title={b.title} />
+              <p className="text-sm font-medium mt-2 px-1 line-clamp-2">{b.title}</p>
+            </Card>
+          ))}
+        </div>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MyPage
+// ═══════════════════════════════════════════════════════════════
+function MyPage() {
+  const { user, navigate, showToast } = useApp();
+  const [mp, setMp] = React.useState(null);
+  const [wlOpen, setWlOpen] = React.useState(false);
+
+  const load = React.useCallback(() => { gasCall('getMyPage').then(setMp).catch(() => {}); }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  const logout = async () => { await gasCall('logout'); try { sessionStorage.removeItem('bomu_token'); } catch (e) {} location.reload(); };
+  const removeWish = async (id) => { await gasCall('removeWishlist', id); load(); };
+
+  if (!mp) return <LoadingScreen />;
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-6">
+        <Avatar url={user.avatar_url} name={user.discord_username} size={56} />
+        <div className="flex-1">
+          <p className="font-bold text-lg">{user.discord_username}</p>
+          <p className="text-sm text-gray-400">{user.role === 'admin' ? '管理者' : '部員'}</p>
+        </div>
+        <Button variant="ghost" onClick={logout}><Icon name="log-out" size={16} />ログアウト</Button>
+      </div>
+
+      {mp.profile.on_penalty &&
+        <Card className="p-3 mb-4 bg-red-50 border-red-100">
+          <p className="text-sm text-red-600 font-medium">借出停止中（{fmtDate(mp.profile.penalty_until)} まで）</p>
+        </Card>}
+
+      <Section title={'借り中の本（' + mp.borrowing.length + '）'}>
+        {mp.borrowing.length === 0 ? <p className="text-sm text-gray-400">なし</p> :
+          mp.borrowing.map((b) => (
+            <div key={b.lending_id} onClick={() => navigate('detail', { book: b.book_id })}
+              className="flex items-center justify-between py-1.5 cursor-pointer hover:bg-gray-50 rounded px-1">
+              <span className="text-sm">{b.title}</span>
+              <span className={'text-xs ' + (b.overdue ? 'text-red-500' : 'text-gray-400')}>{fmtDate(b.due_date)}</span>
+            </div>
+          ))}
+      </Section>
+
+      <Section title={'読了リスト（' + mp.readList.length + '）'}>
+        {mp.readList.length === 0 ? <p className="text-sm text-gray-400">なし</p> :
+          <div className="flex flex-wrap gap-1.5">{mp.readList.map((b) => <Pill key={b.book_id} color="green">{b.title}</Pill>)}</div>}
+      </Section>
+
+      <Section title={'獲得バッジ（' + mp.badges.length + '）'}>
+        {mp.badges.length === 0 ? <p className="text-sm text-gray-400">まだありません</p> :
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {mp.badges.map((b) => (
+              <div key={b.badge_id} className="bg-gradient-to-br from-yellow-50 to-white border border-yellow-100 rounded-xl p-3 text-center">
+                <div className="text-2xl">🏅</div>
+                <p className="text-sm font-medium mt-1">{b.name}</p>
+                <p className="text-[11px] text-gray-400">{b.condition}</p>
+              </div>
+            ))}
+          </div>}
+      </Section>
+
+      <Section title={'自分が登録した本（' + mp.ownedBooks.length + '）'}>
+        {mp.ownedBooks.length === 0 ? <p className="text-sm text-gray-400">なし</p> :
+          <div className="flex flex-wrap gap-1.5">
+            {mp.ownedBooks.map((b) => <Pill key={b.book_id} color="brand">{b.title}</Pill>)}
+          </div>}
+      </Section>
+
+      <Section title={'ウィッシュリスト（' + mp.wishlist.length + '）'}
+        action={<Button variant="secondary" onClick={() => setWlOpen(true)}><Icon name="plus" size={14} />追加</Button>}>
+        {mp.wishlist.length === 0 ? <p className="text-sm text-gray-400">なし</p> :
+          mp.wishlist.map((w) => (
+            <div key={w.wishlist_id} className="flex items-center justify-between py-1.5">
+              <div><span className="text-sm">{w.title}</span>{w.author && <span className="text-xs text-gray-400 ml-2">{w.author}</span>}</div>
+              <button onClick={() => removeWish(w.wishlist_id)} className="text-gray-300 hover:text-red-400"><Icon name="trash-2" size={16} /></button>
+            </div>
+          ))}
+      </Section>
+
+      {wlOpen && <WishlistModal onClose={() => setWlOpen(false)} onDone={() => { setWlOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+function Section({ title, action, children }) {
+  return (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-gray-500">{title}</h3>
+        {action}
+      </div>
+      <Card className="p-3">{children}</Card>
+    </div>
+  );
+}
+
+function WishlistModal({ onClose, onDone }) {
+  const { showToast } = useApp();
+  const [form, setForm] = React.useState({ title: '', author: '', isbn: '', memo: '' });
+  const [busy, setBusy] = React.useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const submit = async () => {
+    if (!form.title.trim()) return showToast('タイトルは必須です', 'error');
+    setBusy(true);
+    try { await gasCall('addWishlist', form); showToast('追加しました'); onDone(); }
+    catch (e) { showToast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={onClose} title="ウィッシュリストに追加"
+      footer={<><Button variant="ghost" onClick={onClose}>キャンセル</Button><Button onClick={submit} loading={busy}>追加</Button></>}>
+      <Field label="タイトル" required><TextInput value={form.title} onChange={(e) => set('title', e.target.value)} /></Field>
+      <Field label="著者"><TextInput value={form.author} onChange={(e) => set('author', e.target.value)} /></Field>
+      <Field label="メモ"><TextArea rows={2} value={form.memo} onChange={(e) => set('memo', e.target.value)} /></Field>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AdminPage
+// ═══════════════════════════════════════════════════════════════
+function AdminPage() {
+  const { showToast } = useApp();
+  const [stats, setStats] = React.useState(null);
+  const [overdue, setOverdue] = React.useState([]);
+  const [members, setMembers] = React.useState([]);
+  const [tags, setTags] = React.useState([]);
+  const [newMember, setNewMember] = React.useState({ discordId: '', username: '', role: 'member' });
+
+  const load = React.useCallback(() => {
+    gasCall('getAdminStats').then(setStats).catch((e) => showToast(e.message, 'error'));
+    gasCall('getOverdueList').then(setOverdue).catch(() => {});
+    gasCall('getMembers').then(setMembers).catch(() => {});
+    gasCall('getTags').then(setTags).catch(() => {});
+  }, [showToast]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const addMember = async () => {
+    try { await gasCall('addMemberToWhitelist', newMember.discordId, newMember.username, newMember.role);
+      showToast('追加しました'); setNewMember({ discordId: '', username: '', role: 'member' }); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+  const clearPenalty = async (id) => {
+    try { await gasCall('clearPenalty', id); showToast('解除しました'); load(); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  if (!stats) return <LoadingScreen />;
+  return (
+    <div>
+      <h2 className="text-xl font-bold mb-4">管理画面</h2>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <StatCard label="総蔵書数" value={stats.totalBooks} />
+        <StatCard label="貸出中" value={stats.lendingCount} />
+        <StatCard label="貸出率" value={stats.lendingRate + '%'} />
+        <StatCard label="部員数" value={stats.memberCount} />
+      </div>
+
+      <Section title="人気本ランキング">
+        {stats.ranking.length === 0 ? <p className="text-sm text-gray-400">データなし</p> :
+          stats.ranking.map((r, i) => (
+            <div key={r.book_id} className="flex items-center justify-between py-1.5">
+              <span className="text-sm"><span className="text-gray-400 mr-2">{i + 1}.</span>{r.title}</span>
+              <Pill>{r.count}回</Pill>
+            </div>
+          ))}
+      </Section>
+
+      <Section title={'返却遅延者（' + overdue.length + '）'}>
+        {overdue.length === 0 ? <p className="text-sm text-gray-400">遅延はありません 🎉</p> :
+          overdue.map((o) => (
+            <div key={o.lending_id} className="flex items-center justify-between py-1.5">
+              <div><span className="text-sm font-medium">{o.borrower_name}</span>
+                <span className="text-xs text-gray-400 ml-2">{o.book_title}・{o.days_overdue}日遅延</span></div>
+            </div>
+          ))}
+      </Section>
+
+      <Section title="メンバー管理">
+        <div className="flex flex-col sm:flex-row gap-2 mb-3">
+          <TextInput placeholder="Discord ID" value={newMember.discordId} onChange={(e) => setNewMember({ ...newMember, discordId: e.target.value })} />
+          <TextInput placeholder="表示名（任意）" value={newMember.username} onChange={(e) => setNewMember({ ...newMember, username: e.target.value })} />
+          <select value={newMember.role} onChange={(e) => setNewMember({ ...newMember, role: e.target.value })}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="member">member</option><option value="admin">admin</option>
+          </select>
+          <Button onClick={addMember}>追加</Button>
+        </div>
+        <div className="divide-y divide-gray-50">
+          {members.map((m) => (
+            <div key={m.member_id} className="flex items-center justify-between py-1.5">
+              <div className="flex items-center gap-2">
+                <Avatar url={m.avatar_url} name={m.discord_username} size={24} />
+                <span className="text-sm">{m.discord_username}</span>
+                {m.role === 'admin' && <Pill color="brand">admin</Pill>}
+                {m.on_penalty && <Pill color="red">停止中</Pill>}
+              </div>
+              {m.on_penalty && <Button variant="ghost" onClick={() => clearPenalty(m.member_id)}>ペナルティ解除</Button>}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="タグ管理">
+        <div className="flex flex-wrap gap-1.5">
+          {tags.map((t) => (
+            <span key={t.tag_id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
+              {t.name} <span className="opacity-50">{t.book_count}</span>
+              <button onClick={async () => { await gasCall('deleteTag', t.tag_id); load(); }} className="text-gray-400 hover:text-red-400 ml-0.5">×</button>
+            </span>
+          ))}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function StatCard({ label, value }) {
+  return (
+    <Card className="p-4 text-center">
+      <p className="text-2xl font-bold text-brand-600">{value}</p>
+      <p className="text-xs text-gray-400 mt-0.5">{label}</p>
+    </Card>
+  );
+}
+</script>

@@ -1,0 +1,15 @@
+# clasp
+.clasp.json
+.clasprc.json
+
+# secrets
+.env
+*.local
+
+# node
+node_modules/
+
+# editor / OS
+.DS_Store
+.vscode/
+*.log

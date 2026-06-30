@@ -1,0 +1,116 @@
+<script type="text/babel">
+// ═══════════════════════════════════════════════════════════════
+//  App.html — ルーティング・グローバル状態・GAS通信
+// ═══════════════════════════════════════════════════════════════
+const { useState, useEffect, useCallback, createContext, useContext } = React;
+
+// ─── グローバル状態（Context） ───────────────────────────────────
+const AppContext = createContext(null);
+function useApp() { return useContext(AppContext); }
+
+// ─── セッショントークン管理 ─────────────────────────────────────
+function getToken() {
+  // ログインブリッジから渡されるハッシュトークンを拾う（フォールバック）
+  const m = location.hash.match(/[#&]token=([^&]+)/);
+  if (m) {
+    try { sessionStorage.setItem('bomu_token', decodeURIComponent(m[1])); } catch (e) {}
+    location.hash = location.hash.replace(/[#&]token=[^&]+/, '');
+  }
+  try { return sessionStorage.getItem('bomu_token') || ''; } catch (e) { return ''; }
+}
+
+// ─── google.script.run のPromiseラッパー（token自動注入） ─────────
+function gasCall(fnName, ...args) {
+  const token = getToken();
+  return new Promise((resolve, reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error('サーバーに接続できません'));
+      return;
+    }
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler((err) => reject(new Error((err && err.message) || 'サーバーエラー')))
+      [fnName](token, ...args);
+  });
+}
+
+// ─── ハッシュルーター（クエリ対応） ─────────────────────────────
+function parseHash() {
+  let raw = location.hash.replace(/^#\/?/, '');     // "detail?book=xxx"
+  const [path, qs] = raw.split('?');
+  const query = {};
+  if (qs) qs.split('&').forEach((p) => {
+    const [k, v] = p.split('=');
+    if (k) query[decodeURIComponent(k)] = decodeURIComponent(v || '');
+  });
+  return { page: path || 'books', query };
+}
+
+function useRouter() {
+  const [route, setRoute] = useState(parseHash());
+  useEffect(() => {
+    const handler = () => setRoute(parseHash());
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
+  }, []);
+  const navigate = (page, query) => {
+    let hash = '/' + page;
+    if (query) {
+      const qs = Object.keys(query).map((k) => k + '=' + encodeURIComponent(query[k])).join('&');
+      if (qs) hash += '?' + qs;
+    }
+    location.hash = hash;
+  };
+  return { route, navigate };
+}
+
+// ─── アプリ本体 ──────────────────────────────────────────────────
+function App() {
+  const { route, navigate } = useRouter();
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+
+  // 起動時にセッション確認
+  useEffect(() => {
+    getToken(); // ハッシュトークンの取り込み
+    gasCall('getSession')
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  if (loading) return <LoadingScreen />;
+  if (!user) return <LoginPage />;
+
+  const pages = {
+    books:    <BooksPage />,
+    detail:   <BookDetailPage />,
+    lendings: <LendingsPage />,
+    requests: <RequestsPage />,
+    forum:    <ForumPage />,
+    mypage:   <MyPage />,
+    admin:    user.role === 'admin' ? <AdminPage /> : <BooksPage />,
+  };
+
+  return (
+    <AppContext.Provider value={{ user, route, navigate, gasCall, showToast }}>
+      <div className="min-h-screen bg-gray-50 pb-16 md:pb-0">
+        <Navbar currentPage={route.page} navigate={navigate} user={user} />
+        <main className="max-w-5xl mx-auto px-4 py-6">
+          {pages[route.page] || <BooksPage />}
+        </main>
+        {toast && <Toast toast={toast} />}
+      </div>
+    </AppContext.Provider>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
