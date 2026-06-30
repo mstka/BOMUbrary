@@ -3,23 +3,9 @@
   "rootDir": "src",
   "fileExtension": "gs",
   "filePushOrder": [
-    "src/Config.gs",
-    "src/Utils.gs",
-    "src/Setup.gs",
-    "src/Members.gs",
-    "src/Books.gs",
-    "src/Tags.gs",
-    "src/Lendings.gs",
-    "src/Penalty.gs",
-    "src/Reviews.gs",
-    "src/Requests.gs",
-    "src/Forum.gs",
-    "src/Baton.gs",
-    "src/Badges.gs",
-    "src/Admin.gs",
+    "src/Core.gs",
+    "src/Domain.gs",
     "src/Discord.gs",
-    "src/Commands.gs",
-    "src/Cron.gs",
-    "src/Code.gs"
+    "src/Main.gs"
   ]
 }

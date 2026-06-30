@@ -1,4 +1,72 @@
 /**
+ * Core.gs — 基盤レイヤー（設定・データ層・初期セットアップ）
+ *  統合元: Config.gs / Utils.gs / Setup.gs
+ */
+
+/* ======================================================================
+ *  Config
+ * ==================================================================== */
+
+/**
+ * Config.gs
+ * スクリプトプロパティから設定値を読み出す薄いラッパー。
+ *
+ * 必要なスクリプトプロパティ（GASエディタ → プロジェクトの設定 → スクリプトプロパティ）:
+ *   SPREADSHEET_ID       … DBに使うスプレッドシートのID
+ *   DISCORD_CLIENT_ID    … Discord アプリの Client ID
+ *   DISCORD_CLIENT_SECRET… Discord アプリの Client Secret
+ *   DISCORD_BOT_TOKEN    … Discord Bot トークン（DM/チャンネル通知・メンバー確認用）
+ *   DISCORD_GUILD_ID     … 起業部 Discord サーバー（ギルド）ID
+ *   DISCORD_PUBLIC_KEY   … Slash Command 署名検証用の公開鍵（任意）
+ *   NOTIFY_CHANNEL_ID    … 部内お知らせチャンネルのID（遅延・投票の全体通知用）
+ *   GOOGLE_BOOKS_API_KEY … Google Books API キー（任意・無くても動く）
+ *   ADMIN_DISCORD_IDS    … 初期管理者の Discord ID（カンマ区切り・任意）
+ *   WEBAPP_URL           … デプロイした Web App の /exec URL（OAuthリダイレクト用）
+ */
+
+const Config = (function () {
+  const props = PropertiesService.getScriptProperties();
+
+  function get(key, fallback) {
+    const v = props.getProperty(key);
+    return (v === null || v === undefined || v === '') ? (fallback || '') : v;
+  }
+
+  return {
+    get: get,
+    spreadsheetId:      function () { return get('SPREADSHEET_ID'); },
+    discordClientId:    function () { return get('DISCORD_CLIENT_ID'); },
+    discordClientSecret:function () { return get('DISCORD_CLIENT_SECRET'); },
+    discordBotToken:    function () { return get('DISCORD_BOT_TOKEN'); },
+    discordGuildId:     function () { return get('DISCORD_GUILD_ID'); },
+    discordPublicKey:   function () { return get('DISCORD_PUBLIC_KEY'); },
+    notifyChannelId:    function () { return get('NOTIFY_CHANNEL_ID'); },
+    googleBooksApiKey:  function () { return get('GOOGLE_BOOKS_API_KEY'); },
+    webappUrl:          function () { return get('WEBAPP_URL') || ScriptApp.getService().getUrl(); },
+    adminDiscordIds:    function () {
+      return get('ADMIN_DISCORD_IDS').split(',').map(function (s) { return s.trim(); }).filter(String);
+    },
+  };
+})();
+
+// 貸出期間・ペナルティ等のビジネスルール定数
+const Rules = {
+  DEFAULT_LEND_DAYS: 14,        // 標準貸与期間
+  LONG_BOOK_LEND_DAYS: 28,      // 300ページ以上
+  LONG_BOOK_PAGE_THRESHOLD: 300,
+  MAX_EXTENSIONS: 1,            // 延長は1回まで
+  EXTENSION_DAYS: 14,           // 1回の延長で延びる日数
+  PENALTY_BASE_DAYS: 3,         // ペナルティ基本停止日数
+  PENALTY_STEP_DAYS: 2,         // 累積1回ごとに加算
+  PENALTY_RESET_MONTHS: 3,      // ペナルティ回数リセット期間
+  SESSION_TTL_SECONDS: 60 * 60 * 6, // セッション有効期限（6時間）
+};
+
+/* ======================================================================
+ *  Utils / SheetDB
+ * ==================================================================== */
+
+/**
  * Utils.gs
  * 共通ユーティリティ + スプレッドシートをDBとして扱う薄いORM。
  *
@@ -280,3 +348,134 @@ const Utils = {
     return String(isbn || '').replace(/[^0-9Xx]/g, '');
   },
 };
+
+/* ======================================================================
+ *  Setup
+ * ==================================================================== */
+
+/**
+ * Setup.gs
+ * 初期セットアップ用。GASエディタから setup() を一度実行すると、
+ * DB用スプレッドシートを用意し、Schema 定義に従って全シートを作成し、
+ * 初期タグ・初期バッジを投入する。
+ */
+
+function setup() {
+  const ss = resolveOrCreateSpreadsheet();
+
+  // 各シートを作成し、ヘッダー行を整える
+  Object.keys(Schema).forEach(function (name) {
+    let sheet = ss.getSheetByName(name);
+    if (!sheet) sheet = ss.insertSheet(name);
+    const cols = Schema[name];
+    const headerRange = sheet.getRange(1, 1, 1, cols.length);
+    headerRange.setValues([cols]);
+    headerRange.setFontWeight('bold').setBackground('#e0eaff');
+    sheet.setFrozenRows(1);
+  });
+
+  // デフォルトの "シート1" が残っていたら削除
+  const def = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
+  if (def && ss.getSheets().length > 1) {
+    try { ss.deleteSheet(def); } catch (e) { /* ignore */ }
+  }
+
+  seedTags();
+  seedBadges();
+  seedAdmins();
+
+  const url = ss.getUrl();
+  Logger.log('セットアップ完了。Spreadsheet: ' + url);
+  Logger.log('SPREADSHEET_ID = ' + ss.getId() + '（スクリプトプロパティに保存済み）');
+  return 'OK / ' + url;
+}
+
+/**
+ * DB用スプレッドシートを解決する。優先順位:
+ *   1. スクリプトプロパティ SPREADSHEET_ID があれば openById
+ *   2. コンテナバインド時はアクティブなスプレッドシート（IDを保存）
+ *   3. どちらも無ければ新規スプレッドシートを作成（IDを保存）
+ * いずれの場合も最終的に SPREADSHEET_ID をスクリプトプロパティへ書き込むので、
+ * Web App デプロイ後（getActiveSpreadsheet が使えない文脈）でも openById で参照できる。
+ */
+function resolveOrCreateSpreadsheet() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('SPREADSHEET_ID');
+  if (id) return SpreadsheetApp.openById(id);
+
+  let ss = null;
+  try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (e) { ss = null; }
+  if (!ss) {
+    ss = SpreadsheetApp.create('BOMUbrary DB');
+  }
+  props.setProperty('SPREADSHEET_ID', ss.getId());
+  return ss;
+}
+
+/** 初期タグ（仕様書の初期タグ例） */
+function seedTags() {
+  if (SheetDB.read('tags').length > 0) return;
+  const initial = [
+    '起業', 'マーケ', '技術', '思想', '組織', 'ファイナンス', '営業', 'デザイン',
+    'アイデア期', '開発中', 'PMF', '営業中', '資金調達', 'スケール期',
+    '通読向け', 'ななめ読みOK', '辞書的に使う', '課題図書',
+    '入門', '中級', '上級',
+    '1日で読める', '1週間目安', 'じっくり系',
+  ];
+  initial.forEach(function (name) {
+    SheetDB.insert('tags', {
+      tag_id: Utils.uuid(),
+      name: name,
+      created_by: 'system',
+      created_at: Utils.now(),
+    });
+  });
+}
+
+/** 初期バッジ（仕様書の読書バッジ） */
+function seedBadges() {
+  if (SheetDB.read('badges').length > 0) return;
+  const badges = [
+    ['初借り', '初めて本を借りる'],
+    ['初レビュー', '初めてレビューを書く'],
+    ['タグ職人', 'タグを5個以上新規作成する'],
+    ['バトンの達人', 'バトンリレーを5回以上実施'],
+    ['蔵書貢献者', '部の蔵書に3冊以上登録'],
+    ['リクエスター', '購入リクエストが購入済みになる'],
+    ['皆勤返却', '遅延ゼロで10冊返却'],
+    ['読書会常連', '読書会スレッドに10回以上投稿'],
+    ['読破王', '読了マークを20冊以上つける'],
+  ];
+  badges.forEach(function (b) {
+    SheetDB.insert('badges', {
+      badge_id: b[0],            // 安定したキーとして名前ベースのIDを使う
+      name: b[0],
+      condition: b[1],
+    });
+  });
+}
+
+/** ADMIN_DISCORD_IDS に列挙された Discord ID を管理者として members に登録 */
+function seedAdmins() {
+  const ids = Config.adminDiscordIds();
+  ids.forEach(function (discordId) {
+    const existing = SheetDB.find('members', function (m) { return m.discord_id === discordId; });
+    if (existing) {
+      if (existing.role !== 'admin') {
+        SheetDB.update('members', 'member_id', existing.member_id, { role: 'admin' });
+      }
+      return;
+    }
+    SheetDB.insert('members', {
+      member_id: Utils.uuid(),
+      discord_id: discordId,
+      discord_username: '(管理者)',
+      avatar_url: '',
+      role: 'admin',
+      penalty_until: '',
+      penalty_count: 0,
+      last_penalty_at: '',
+      joined_at: Utils.now(),
+    });
+  });
+}

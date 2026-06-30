@@ -19,27 +19,38 @@
 | 定期処理 | GAS 時間主導トリガー（cron） |
 | UI | React 18 + Tailwind（いずれも CDN、ビルド不要） |
 
+GAS にアップロードしやすいよう、サーバーサイドは役割ごとに **4 つの `.gs`** に集約しています
+（GAS の `.gs` は全て同一グローバルスコープで評価されるため、ファイル分割は整理のためだけのものです）。
+
 ```
 src/
 ├─ appsscript.json     # マニフェスト（スコープ・WebApp設定）
-├─ Config.gs           # スクリプトプロパティ／ビジネスルール定数
-├─ Utils.gs            # スプレッドシートをDBとして扱う薄いORM（SheetDB）＋共通関数
-├─ Setup.gs            # シート初期化・初期タグ/バッジ投入（setup()）
-├─ Members.gs          # メンバー・マイページ・ウィッシュリスト
-├─ Books.gs            # 蔵書CRUD・ISBN書誌取得
-├─ Tags.gs             # タグCRUD・統廃合
-├─ Lendings.gs         # 貸出申請/承認/返却/延長/待ちリスト/読了マーク
-├─ Penalty.gs          # 遅延ペナルティ計算・執行・リセット
-├─ Reviews.gs          # レビュー・読み方ガイド
-├─ Requests.gs         # 購入リクエスト・投票
-├─ Forum.gs            # 読書会スレッド（読了者のみ）
-├─ Baton.gs            # バトンリレー
-├─ Badges.gs           # 読書バッジ判定・付与
-├─ Admin.gs            # 蔵書統計・遅延者・メンバー管理
-├─ Discord.gs          # DM/チャンネル通知・Slash Command Interaction
-├─ Commands.gs         # Slash Command 登録（registerSlashCommands()）
-├─ Cron.gs             # 定期処理＋トリガー登録（installTriggers()）
-├─ Code.gs             # doGet/doPost・RPCエントリポイント
+│
+├─ Core.gs             # 基盤レイヤー
+│    ├ Config          … スクリプトプロパティ／ビジネスルール定数
+│    ├ Utils / SheetDB … スプレッドシートをDBとして扱う薄いORM＋共通関数
+│    └ Setup           … シート初期化・スプシ自動作成・初期タグ/バッジ投入（setup()）
+│
+├─ Domain.gs           # 業務ロジック
+│    ├ Members  … メンバー・マイページ・ウィッシュリスト
+│    ├ Books    … 蔵書CRUD・ISBN書誌取得
+│    ├ Tags     … タグCRUD・統廃合
+│    ├ Lendings … 貸出申請/承認/返却/延長/待ちリスト/読了マーク
+│    ├ Penalty  … 遅延ペナルティ計算・執行・リセット
+│    ├ Reviews  … レビュー・読み方ガイド
+│    ├ Requests … 購入リクエスト・投票
+│    ├ Forum    … 読書会スレッド（読了者のみ）
+│    ├ Baton    … バトンリレー
+│    ├ Badges   … 読書バッジ判定・付与
+│    └ Admin    … 蔵書統計・遅延者・メンバー管理
+│
+├─ Discord.gs          # Discord連携（DM/チャンネル通知・Slash Command・コマンド登録）
+│
+├─ Main.gs             # 認証・エントリポイント・定期処理
+│    ├ Auth … Discord OAuth2・セッション管理
+│    ├ Code … doGet/doPost・RPC エントリポイント
+│    └ Cron … 定期処理＋トリガー登録（installTriggers()）
+│
 ├─ Index.html          # CDN読み込み・Tailwind設定
 ├─ Styles.html         # カスタムCSS
 ├─ Components.html     # 共通UIコンポーネント
