@@ -287,17 +287,23 @@ function BookDetailPage() {
   const [book, setBook] = React.useState(null);
   const [tab, setTab] = React.useState('info');
   const [busy, setBusy] = React.useState(false);
+  const [showEdit, setShowEdit] = React.useState(false);
+  const [allTags, setAllTags] = React.useState([]);
 
   const load = React.useCallback(() => {
     if (!bookId) return;
     gasCall('getBookById', bookId).then(setBook).catch(() => showToast('本が見つかりません', 'error'));
   }, [bookId, showToast]);
-  React.useEffect(() => { load(); }, [load]);
+  const loadTags = React.useCallback(() => {
+    gasCall('getTags').then(setAllTags).catch(() => {});
+  }, []);
+  React.useEffect(() => { load(); loadTags(); }, [load, loadTags]);
 
   if (!book) return <LoadingScreen />;
 
   const cur = book.current_lending;
   const isOwner = book.owner_id === user.member_id;
+  const canEdit = isOwner || user.role === 'admin';
   const iAmBorrower = cur && cur.borrower_id === user.member_id;
   const inWaitlist = (book.waitlist || []).some((w) => w.member_id === user.member_id);
   const pendingRequest = (book.history || []).some((h) => h.status === 'requested' && h.borrower_id === user.member_id);
@@ -360,6 +366,11 @@ function BookDetailPage() {
                 className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100">
                 <Icon name="external-link" size={16} />関連リンク
               </a>}
+
+            {canEdit &&
+              <Button variant="secondary" onClick={() => setShowEdit(true)}>
+                <Icon name="pencil" size={16} />編集
+              </Button>}
           </div>
 
           {/* オーナー: 承認待ちリスト */}
@@ -399,7 +410,99 @@ function BookDetailPage() {
       {tab === 'reviews' && <ReviewsTab bookId={bookId} />}
       {tab === 'forum' && <ForumTab book={book} onReadMark={load} />}
       {tab === 'baton' && <BatonTab book={book} onDone={load} />}
+
+      {showEdit &&
+        <EditBookModal book={book} tags={allTags}
+          onClose={() => setShowEdit(false)}
+          onReloadTags={loadTags}
+          onSaved={() => { setShowEdit(false); load(); }}
+          onDeleted={() => { setShowEdit(false); navigate('books'); }} />}
     </div>
+  );
+}
+
+// ─── 本編集モーダル（オーナー / 管理者） ─────────────────────────
+function EditBookModal({ book, tags, onClose, onReloadTags, onSaved, onDeleted }) {
+  const { showToast } = useApp();
+  const [form, setForm] = React.useState({
+    title: book.title || '', author: book.author || '', publisher: book.publisher || '',
+    isbn: book.isbn || '', cover_url: book.cover_url || '',
+    page_count: book.page_count || '', condition: book.condition || '良好',
+    external_link: book.external_link || '',
+  });
+  const [selectedTags, setSelectedTags] = React.useState((book.tags || []).map((t) => t.tag_id));
+  const [saving, setSaving] = React.useState(false);
+  const [confirmDel, setConfirmDel] = React.useState(false);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const createTag = async (name) => {
+    const r = await gasCall('createTag', name);
+    await onReloadTags();
+    return r.tag_id;
+  };
+
+  const submit = async () => {
+    if (!form.title.trim()) return showToast('タイトルは必須です', 'error');
+    setSaving(true);
+    try {
+      await gasCall('updateBook', book.book_id, {
+        ...form, page_count: Number(form.page_count) || 0, tagIds: selectedTags,
+      });
+      showToast('保存しました');
+      onSaved();
+    } catch (e) { showToast(e.message || '保存に失敗しました', 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const remove = async () => {
+    setSaving(true);
+    try { await gasCall('deleteBook', book.book_id); showToast('削除しました'); onDeleted(); }
+    catch (e) { showToast(e.message || '削除に失敗しました', 'error'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="本を編集" wide
+      footer={
+        <>
+          <Button variant="danger" onClick={() => setConfirmDel(true)}><Icon name="trash-2" size={16} />削除</Button>
+          <div className="flex-1" />
+          <Button variant="ghost" onClick={onClose}>キャンセル</Button>
+          <Button onClick={submit} loading={saving}>保存</Button>
+        </>
+      }>
+      <Field label="タイトル" required>
+        <TextInput value={form.title} onChange={(e) => set('title', e.target.value)} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="著者"><TextInput value={form.author} onChange={(e) => set('author', e.target.value)} /></Field>
+        <Field label="出版社"><TextInput value={form.publisher} onChange={(e) => set('publisher', e.target.value)} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="ISBN"><TextInput value={form.isbn} onChange={(e) => set('isbn', e.target.value)} /></Field>
+        <Field label="ページ数"><TextInput type="number" value={form.page_count} onChange={(e) => set('page_count', e.target.value)} /></Field>
+      </div>
+      <Field label="コンディション">
+        <select value={form.condition} onChange={(e) => set('condition', e.target.value)}
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+          {['新品', '良好', '使用感あり', 'メモ書きあり'].map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </Field>
+      <Field label="表紙画像URL"><TextInput value={form.cover_url} onChange={(e) => set('cover_url', e.target.value)} /></Field>
+      <Field label="外部リンク（Amazon等）"><TextInput value={form.external_link} onChange={(e) => set('external_link', e.target.value)} /></Field>
+      <Field label="タグ">
+        <TagSelector allTags={tags} selected={selectedTags} onChange={setSelectedTags} onCreate={createTag} />
+      </Field>
+
+      {confirmDel &&
+        <div className="mt-2 bg-red-50 border border-red-100 rounded-xl p-3">
+          <p className="text-sm text-red-600 mb-2">この本を削除しますか？（貸出中の本は削除できません）</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmDel(false)}>やめる</Button>
+            <Button variant="danger" onClick={remove} loading={saving}>削除する</Button>
+          </div>
+        </div>}
+    </Modal>
   );
 }
 
