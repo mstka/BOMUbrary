@@ -251,27 +251,40 @@ function doGet(e) {
 
 /**
  * OAuth結果をフロントへ渡すための中間ページ。
- * 成功時は token を sessionStorage に保存してアプリ本体（/exec）へ遷移する。
+ * 成功時は token を sessionStorage に保存し、アプリ本体（/exec）へ遷移する。
+ *
+ * 注: GAS のサンドボックス iframe は allow-top-navigation-by-user-activation のため、
+ * ユーザー操作（クリック）が無いと top 遷移できない。よって自動遷移は best-effort とし、
+ * 確実な導線として「アプリを開く」ボタン（target=_top のアンカー）を必ず表示する。
  */
 function renderAuthBridge(result) {
   const safe = JSON.stringify(result).replace(/</g, '\\u003c');
   const url = Config.webappUrl();
-  const html = ''
-    + '<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">'
-    + '<style>body{font-family:sans-serif;display:flex;height:100vh;align-items:center;'
-    + 'justify-content:center;margin:0;background:#f0f4ff;color:#1a2b8a}</style></head>'
-    + '<body><div id="m">ログイン処理中...</div><script>'
-    + 'var r=' + safe + ';'
-    + 'var base=' + JSON.stringify(url) + ';'
-    + 'function go(t){'
-    + '  try{sessionStorage.setItem("bomu_token",t);}catch(e){}'
-    + '  var dest=base+"#token="+encodeURIComponent(t);'
-    + '  try{ (window.top||window).location.replace(dest); }catch(e){ location.replace(dest); }'
-    + '}'
-    + 'if(r&&r.token){go(r.token);}'
-    + 'else{document.getElementById("m").innerHTML='
-    + '((r&&r.error)||"ログインに失敗しました")+"<br><br><a target=\\"_top\\" href=\\""+base+"\\">戻る</a>";}'
-    + '</script></body></html>';
+  const html = [
+    '<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+    '<style>',
+    'body{font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:#f0f4ff;color:#1a2b8a;text-align:center}',
+    '.box{padding:24px}',
+    '.btn{display:inline-block;margin-top:16px;background:#4f6ef7;color:#fff;text-decoration:none;padding:12px 24px;border-radius:12px;font-weight:600}',
+    '.err{color:#c0392b}',
+    '</style></head>',
+    '<body><div class="box" id="box">ログイン処理中...</div><script>',
+    'var r=' + safe + ';',
+    'var base=' + JSON.stringify(url) + ';',
+    'var box=document.getElementById("box");',
+    'if(r&&r.token){',
+    '  try{sessionStorage.setItem("bomu_token",r.token);}catch(e){}',
+    '  var dest=base+"#token="+encodeURIComponent(r.token);',
+    // best-effort の自動遷移（ジェスチャー無しだとブロックされ得る）
+    '  try{ (window.top||window).location.replace(dest); }catch(e){}',
+    // 確実な導線: クリック=ユーザー操作で top 遷移
+    '  box.innerHTML="ログインに成功しました。<br><a class=\\"btn\\" target=\\"_top\\" href=\\""+dest+"\\">アプリを開く</a>";',
+    '}else{',
+    '  box.innerHTML="<span class=\\"err\\">"+((r&&r.error)||"ログインに失敗しました")+"</span><br><a class=\\"btn\\" target=\\"_top\\" href=\\""+base+"\\">戻る</a>";',
+    '}',
+    '</script></body></html>'
+  ].join('');
   return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
