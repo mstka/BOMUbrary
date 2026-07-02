@@ -394,6 +394,20 @@ function setup() {
 }
 
 /**
+ * 表紙解決の動作確認。GASエディタで実行し、ログの cover_url を見る。
+ * - cover.openbd.jp / books.google なら最新コード（正常）
+ * - ndlsearch.ndl.go.jp/thumbnail なら「保存中のコードが旧版」→ Domain.gs を貼り直す
+ * 実行できるのは保存中(HEAD)のコードなので、ここが正常でも /exec が古い場合は
+ * 「デプロイ → デプロイを管理 → 編集 → 新バージョン」で再デプロイが必要。
+ */
+function testCoverLookup() {
+  const isbn = '9784297154363';
+  const meta = Books.lookupIsbn(isbn);
+  Logger.log('lookupIsbn(' + isbn + ') = ' + JSON.stringify(meta));
+  return meta;
+}
+
+/**
  * 壊れた表紙URL（旧NDLサムネイル等）を一括修復する保守用関数。
  * 表紙が空 or NDLサムネイルURLの本について、ISBNから openBD/Google で再解決する。
  * GASエディタから手動実行する。
