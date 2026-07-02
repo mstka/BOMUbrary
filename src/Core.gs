@@ -394,6 +394,28 @@ function setup() {
 }
 
 /**
+ * 壊れた表紙URL（旧NDLサムネイル等）を一括修復する保守用関数。
+ * 表紙が空 or NDLサムネイルURLの本について、ISBNから openBD/Google で再解決する。
+ * GASエディタから手動実行する。
+ */
+function fixBrokenCovers() {
+  let fixed = 0, checked = 0;
+  SheetDB.read('books').forEach(function (b) {
+    if (!b.isbn) return;
+    const broken = !b.cover_url || b.cover_url.indexOf('ndlsearch.ndl.go.jp/thumbnail') >= 0;
+    if (!broken) return;
+    checked++;
+    const cover = Books.resolveCover(b.isbn);
+    if (cover && cover !== b.cover_url) {
+      SheetDB.update('books', 'book_id', b.book_id, { cover_url: cover });
+      fixed++;
+    }
+  });
+  Logger.log('表紙修復: 対象' + checked + '件中 ' + fixed + '件を更新しました。');
+  return '対象' + checked + '件 / 更新' + fixed + '件';
+}
+
+/**
  * DB用スプレッドシートを解決する。優先順位:
  *   1. スクリプトプロパティ SPREADSHEET_ID があれば openById
  *   2. コンテナバインド時はアクティブなスプレッドシート（IDを保存）

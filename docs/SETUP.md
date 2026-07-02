@@ -215,4 +215,5 @@ bash scripts/register-commands.sh
 `--clear` が 200 を返せばネットワーク疎通はOK。続けて本登録してください。
 （通知系 DM/チャンネル送信は別ルートのため、この事象の影響を受けないことが多いですが、
 もし DM も GAS から送れない場合はご相談ください。）
-| 書誌が取得できない | 新刊で NDL/Google Books 未収録の可能性。`pending_enrichment=true` で仮登録され、毎日9:00 の cron が再取得します |
+| 書誌が取得できない | 新刊で NDL/openBD/Google Books 未収録の可能性。`pending_enrichment=true` で仮登録され、毎日9:00 の cron が再取得します |
+| 表紙画像が表示されない/壊れる | 旧版は NDL サムネイルURLを使っており CloudFront で 403 になります。最新版は openBD→Google Books から表紙を解決します。既存データは `fixBrokenCovers()`（`Core.gs`）を一度実行すると再解決されます |
