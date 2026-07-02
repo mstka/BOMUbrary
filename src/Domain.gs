@@ -297,11 +297,73 @@ const Books = (function () {
   }
 
   // ─── ISBN書誌取得 ───────────────────────────────────────────────
-  /** NDL → Google Books の順で書誌を取得。両方ダメなら null */
+  /**
+   * NDL → openBD → Google Books の順で書誌を取得。
+   * 表紙は別途 resolveCover() で信頼できるソース（openBD/Google）から解決する。
+   * （NDLのサムネイルURLは CloudFront でホットリンクが 403 になるため使わない）
+   */
   function lookupIsbn(isbnRaw) {
     const isbn = Utils.isbnNormalize(isbnRaw);
     if (!isbn) return null;
-    return fetchFromNdl(isbn) || fetchFromGoogleBooks(isbn) || null;
+    const meta = fetchFromNdl(isbn) || fetchFromOpenBd(isbn) || fetchFromGoogleBooks(isbn);
+    if (!meta) return null;
+    if (!meta.cover_url) meta.cover_url = resolveCover(isbn);
+    return meta;
+  }
+
+  /** 表紙画像URLを信頼できるソースから解決（openBD → Google Books） */
+  function resolveCover(isbn) {
+    // 1) openBD の表紙（cover.openbd.jp・ホットリンク可）
+    try {
+      const res = UrlFetchApp.fetch('https://api.openbd.jp/v1/get?isbn=' + encodeURIComponent(isbn),
+        { muteHttpExceptions: true });
+      if (res.getResponseCode() === 200) {
+        const arr = JSON.parse(res.getContentText());
+        if (arr && arr[0] && arr[0].summary && arr[0].summary.cover) return arr[0].summary.cover;
+      }
+    } catch (e) { /* ignore */ }
+    // 2) Google Books の表紙
+    const g = fetchFromGoogleBooks(isbn);
+    if (g && g.cover_url) return g.cover_url;
+    return '';
+  }
+
+  /** openBD（日本の書誌DB）から取得。表紙も含む */
+  function fetchFromOpenBd(isbn) {
+    try {
+      const res = UrlFetchApp.fetch('https://api.openbd.jp/v1/get?isbn=' + encodeURIComponent(isbn),
+        { muteHttpExceptions: true });
+      if (res.getResponseCode() !== 200) return null;
+      const arr = JSON.parse(res.getContentText());
+      if (!arr || !arr.length || !arr[0]) return null;
+      const rec = arr[0];
+      const s = rec.summary || {};
+      if (!s.title) return null;
+      return {
+        title: s.title,
+        author: s.author || '',
+        publisher: s.publisher || '',
+        isbn: isbn,
+        page_count: openBdPages(rec),
+        cover_url: s.cover || '',
+        source: 'openBD',
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** openBD の ONIX からページ数を推定 */
+  function openBdPages(rec) {
+    try {
+      const ext = rec.onix && rec.onix.DescriptiveDetail && rec.onix.DescriptiveDetail.Extent;
+      if (ext && ext.length) {
+        for (let i = 0; i < ext.length; i++) {
+          if (ext[i].ExtentValue) return Number(ext[i].ExtentValue) || 0;
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return 0;
   }
 
   /** 国立国会図書館サーチAPI（OpenSearch / RSS）から取得 */
@@ -339,7 +401,7 @@ const Books = (function () {
         publisher: txt(item, 'publisher', dc),
         isbn: isbn,
         page_count: pages,
-        cover_url: 'https://ndlsearch.ndl.go.jp/thumbnail/' + isbn + '.jpg',
+        cover_url: '', // NDLサムネイルはホットリンク不可。resolveCover() で別途解決
         source: 'NDL',
       };
     } catch (e) {
@@ -455,7 +517,9 @@ const Books = (function () {
     detail: detail,
     lendDays: lendDays,
     lookupIsbn: lookupIsbn,
+    resolveCover: resolveCover,
     fetchFromNdl: fetchFromNdl,
+    fetchFromOpenBd: fetchFromOpenBd,
     fetchFromGoogleBooks: fetchFromGoogleBooks,
     register: register,
     updateBook: updateBook,
