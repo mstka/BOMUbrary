@@ -1,0 +1,8 @@
+# clasp push時に無視するファイル
+README.md
+docs/**
+worker/**
+scripts/**
+.clasp.json.example
+.gitignore
+*.md
