@@ -203,11 +203,12 @@ function RegisterBookModal({ tags, onClose, onDone, onReloadTags }) {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const lookup = async () => {
-    if (!form.isbn) return showToast('ISBNを入力してください', 'error');
+  const lookup = async (isbnArg) => {
+    const isbn = (typeof isbnArg === 'string' && isbnArg) || form.isbn;
+    if (!isbn) return showToast('ISBNを入力してください', 'error');
     setLooking(true);
     try {
-      const meta = await gasCall('lookupIsbn', form.isbn);
+      const meta = await gasCall('lookupIsbn', isbn);
       if (meta) {
         setForm((f) => ({ ...f,
           title: meta.title || f.title, author: meta.author || f.author,
@@ -246,11 +247,16 @@ function RegisterBookModal({ tags, onClose, onDone, onReloadTags }) {
       footer={<><Button variant="ghost" onClick={onClose}>キャンセル</Button>
         <Button onClick={submit} loading={saving}>登録</Button></>}>
       <Field label="ISBN（13桁）">
-        <div className="flex gap-2">
-          <TextInput value={form.isbn} onChange={(e) => set('isbn', e.target.value)} placeholder="9784..." />
-          <Button variant="secondary" onClick={lookup} loading={looking}>書誌取得</Button>
+        <div className="flex flex-wrap gap-2">
+          <TextInput value={form.isbn} onChange={(e) => set('isbn', e.target.value)} placeholder="9784..." className="flex-1 min-w-[8rem]" />
+          <BarcodeButton onDetected={(isbn) => {
+            set('isbn', isbn);
+            showToast('ISBN ' + isbn + ' を読み取りました');
+            lookup(isbn);
+          }} />
+          <Button variant="secondary" onClick={() => lookup()} loading={looking}>書誌取得</Button>
         </div>
-        <p className="text-xs text-gray-400 mt-1">NDL → Google Books の順で自動取得します</p>
+        <p className="text-xs text-gray-400 mt-1">「バーコード」で本の裏を撮影するとISBNを自動入力→書誌取得します（NDL→openBD→Google Books）</p>
       </Field>
       <Field label="タイトル" required>
         <TextInput value={form.title} onChange={(e) => set('title', e.target.value)} />

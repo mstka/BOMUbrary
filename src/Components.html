@@ -295,6 +295,57 @@ function CoverUploader({ value, onChange }) {
   );
 }
 
+// ─── BarcodeButton（バーコードを撮影→ISBNをデコード） ───────────
+// GASのiframeではライブカメラ(getUserMedia)が使えないことが多いため、
+// 撮影した1枚の画像から html5-qrcode でデコードする方式。
+function BarcodeButton({ onDetected }) {
+  const { showToast } = useApp();
+  const [busy, setBusy] = React.useState(false);
+  const ref = React.useRef(null);
+
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!window.Html5Qrcode) { showToast('スキャナの読み込みに失敗しました', 'error'); return; }
+    setBusy(true);
+    try {
+      let host = document.getElementById('bc-scan-host');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'bc-scan-host';
+        host.style.display = 'none';
+        document.body.appendChild(host);
+      }
+      const formats = window.Html5QrcodeSupportedFormats
+        ? [window.Html5QrcodeSupportedFormats.EAN_13, window.Html5QrcodeSupportedFormats.EAN_8]
+        : undefined;
+      const h5 = new window.Html5Qrcode('bc-scan-host', formats ? { formatsToSupport: formats } : undefined);
+      const decoded = await h5.scanFile(file, false);
+      try { await h5.clear(); } catch (e) {}
+      const isbn = String(decoded).replace(/[^0-9]/g, '');
+      if (!/^(978|979)\d{10}$/.test(isbn)) {
+        showToast('書籍バーコード（978/979で始まる方）を読み取れませんでした', 'error');
+        return;
+      }
+      onDetected(isbn);
+    } catch (err) {
+      showToast('バーコードを認識できませんでした。明るくピントを合わせて撮り直してください', 'error');
+    } finally {
+      setBusy(false);
+      if (ref.current) ref.current.value = '';
+    }
+  };
+
+  return (
+    <>
+      <input ref={ref} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
+      <Button variant="secondary" type="button" onClick={() => ref.current && ref.current.click()} loading={busy}>
+        <Icon name="scan-line" size={16} />バーコード
+      </Button>
+    </>
+  );
+}
+
 // ─── Field（フォーム用ラベル付き入力） ──────────────────────────
 function Field({ label, required, children }) {
   return (
