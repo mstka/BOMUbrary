@@ -413,20 +413,23 @@ function testCoverLookup() {
  * GASエディタから手動実行する。
  */
 function fixBrokenCovers() {
-  let fixed = 0, checked = 0;
+  let fixed = 0, cleared = 0, checked = 0;
   SheetDB.read('books').forEach(function (b) {
-    if (!b.isbn) return;
-    const broken = !b.cover_url || b.cover_url.indexOf('ndlsearch.ndl.go.jp/thumbnail') >= 0;
+    const cur = b.cover_url || '';
+    const isNdl = cur.indexOf('ndlsearch.ndl.go.jp/thumbnail') >= 0;
+    // NDLの壊れたURLは必ず対象。空欄はISBNがある時だけ再取得を試みる。
+    const broken = isNdl || (!cur && b.isbn);
     if (!broken) return;
     checked++;
-    const cover = Books.resolveCover(b.isbn);
-    if (cover && cover !== b.cover_url) {
+    const cover = (b.isbn ? Books.resolveCover(b.isbn) : '') || '';
+    if (cover !== cur) {
       SheetDB.update('books', 'book_id', b.book_id, { cover_url: cover });
-      fixed++;
+      if (cover) fixed++; else cleared++;
     }
   });
-  Logger.log('表紙修復: 対象' + checked + '件中 ' + fixed + '件を更新しました。');
-  return '対象' + checked + '件 / 更新' + fixed + '件';
+  const msg = '表紙修復: 対象' + checked + '件 / 差し替え' + fixed + '件 / 空にクリア' + cleared + '件';
+  Logger.log(msg);
+  return msg;
 }
 
 /**
