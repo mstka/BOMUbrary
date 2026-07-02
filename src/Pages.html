@@ -268,7 +268,10 @@ function RegisterBookModal({ tags, onClose, onDone, onReloadTags }) {
           </select>
         </Field>
       </div>
-      <Field label="表紙画像URL"><TextInput value={form.cover_url} onChange={(e) => set('cover_url', e.target.value)} /></Field>
+      <Field label="表紙（撮影 / アップロード）">
+        <CoverUploader value={form.cover_url} onChange={(url) => set('cover_url', url)} />
+      </Field>
+      <Field label="表紙画像URL（手入力も可）"><TextInput value={form.cover_url} onChange={(e) => set('cover_url', e.target.value)} /></Field>
       <Field label="外部リンク（Amazon等）"><TextInput value={form.external_link} onChange={(e) => set('external_link', e.target.value)} /></Field>
       <Field label="タグ">
         <TagSelector allTags={tags} selected={selectedTags} onChange={setSelectedTags} onCreate={createTag} />
@@ -488,7 +491,10 @@ function EditBookModal({ book, tags, onClose, onReloadTags, onSaved, onDeleted }
           {['新品', '良好', '使用感あり', 'メモ書きあり'].map((c) => <option key={c}>{c}</option>)}
         </select>
       </Field>
-      <Field label="表紙画像URL"><TextInput value={form.cover_url} onChange={(e) => set('cover_url', e.target.value)} /></Field>
+      <Field label="表紙（撮影 / アップロード）">
+        <CoverUploader value={form.cover_url} onChange={(url) => set('cover_url', url)} />
+      </Field>
+      <Field label="表紙画像URL（手入力も可）"><TextInput value={form.cover_url} onChange={(e) => set('cover_url', e.target.value)} /></Field>
       <Field label="外部リンク（Amazon等）"><TextInput value={form.external_link} onChange={(e) => set('external_link', e.target.value)} /></Field>
       <Field label="タグ">
         <TagSelector allTags={tags} selected={selectedTags} onChange={setSelectedTags} onCreate={createTag} />

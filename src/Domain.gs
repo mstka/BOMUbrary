@@ -510,6 +510,44 @@ const Books = (function () {
     SheetDB.update('books', 'book_id', bookId, { status: status });
   }
 
+  // ─── 表紙画像アップロード（撮影画像を Google Drive に保存） ───────
+  /** 表紙画像を保存する専用フォルダを取得（無ければ作成しIDを保存） */
+  function coverFolder() {
+    const props = PropertiesService.getScriptProperties();
+    const fid = props.getProperty('COVER_FOLDER_ID');
+    if (fid) {
+      try { return DriveApp.getFolderById(fid); } catch (e) { /* 消えていたら作り直す */ }
+    }
+    const folder = DriveApp.createFolder('BOMUbrary Covers');
+    props.setProperty('COVER_FOLDER_ID', folder.getId());
+    return folder;
+  }
+
+  /**
+   * base64 dataURL の画像を Drive に保存し、埋め込み可能な公開URLを返す。
+   * payload: { dataUrl: 'data:image/jpeg;base64,...', filename }
+   */
+  function uploadCover(member, payload) {
+    const dataUrl = (payload && payload.dataUrl) || '';
+    const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
+    if (!m) throw new Error('画像データが不正です。');
+    const contentType = m[1];
+    const ext = (contentType.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const bytes = Utilities.base64Decode(m[2]);
+    const name = 'cover_' + member.member_id + '_' + Date.now() + '.' + ext;
+    const blob = Utilities.newBlob(bytes, contentType, name);
+
+    const file = coverFolder().createFile(blob);
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (e) { /* 共有ドライブ等で失敗しても続行 */ }
+
+    const id = file.getId();
+    // 埋め込みに強い Drive サムネイルURL（公開ファイルなら <img> で表示可）
+    const url = 'https://drive.google.com/thumbnail?id=' + id + '&sz=w800';
+    return { ok: true, url: url, file_id: id };
+  }
+
   return {
     raw: raw,
     toCard: toCard,
@@ -525,6 +563,7 @@ const Books = (function () {
     updateBook: updateBook,
     deleteBook: deleteBook,
     setStatus: setStatus,
+    uploadCover: uploadCover,
   };
 })();
 

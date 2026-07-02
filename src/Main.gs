@@ -364,6 +364,11 @@ function deleteBook(token, bookId) {
   return Books.deleteBook(member, bookId);
 }
 
+function uploadCover(token, payload) {
+  const member = requireMember(token);
+  return Books.uploadCover(member, payload);
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  タグ系 RPC
 // ═══════════════════════════════════════════════════════════════

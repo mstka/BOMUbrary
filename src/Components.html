@@ -233,6 +233,68 @@ function BookCover({ url, title, className = '' }) {
   );
 }
 
+// ─── 画像を縮小して dataURL(JPEG) に変換（アップロード軽量化） ──
+function resizeImageToDataUrl(file, maxW) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('画像を解析できませんでした'));
+      img.onload = () => {
+        const scale = Math.min(1, maxW / (img.width || maxW));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// ─── CoverUploader（撮影/選択→Driveへアップロード→URL反映） ─────
+function CoverUploader({ value, onChange }) {
+  const { showToast } = useApp();
+  const [busy, setBusy] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 800);
+      const r = await gasCall('uploadCover', { dataUrl: dataUrl, filename: file.name || 'cover.jpg' });
+      onChange(r.url);
+      showToast('表紙をアップロードしました');
+    } catch (err) {
+      showToast(err.message || 'アップロードに失敗しました', 'error');
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-16 shrink-0"><BookCover url={value} title="表紙" /></div>
+      <div className="flex-1">
+        <input ref={inputRef} type="file" accept="image/*" capture="environment"
+          className="hidden" onChange={onFile} />
+        <Button variant="secondary" type="button" onClick={() => inputRef.current && inputRef.current.click()} loading={busy}>
+          <Icon name="camera" size={16} />撮影 / 画像を選ぶ
+        </Button>
+        {value && <Button variant="ghost" type="button" onClick={() => onChange('')} className="ml-1">クリア</Button>}
+        <p className="text-xs text-gray-400 mt-1">スマホならカメラが起動します。アップロード後、下のURL欄に反映されます。</p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Field（フォーム用ラベル付き入力） ──────────────────────────
 function Field({ label, required, children }) {
   return (

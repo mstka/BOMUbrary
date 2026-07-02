@@ -217,3 +217,5 @@ bash scripts/register-commands.sh
 もし DM も GAS から送れない場合はご相談ください。）
 | 書誌が取得できない | 新刊で NDL/openBD/Google Books 未収録の可能性。`pending_enrichment=true` で仮登録され、毎日9:00 の cron が再取得します |
 | 表紙画像が表示されない/壊れる | 旧版は NDL サムネイルURLを使っており CloudFront で 403 になります。最新版は openBD→Google Books から表紙を解決します。既存データは `fixBrokenCovers()`（`Core.gs`）を一度実行すると再解決されます |
+| 表紙をカメラ撮影してアップロードしたい | 登録/編集画面の「表紙（撮影 / アップロード）」から撮影・選択できます。画像は Google Drive の `BOMUbrary Covers` フォルダに保存され、公開URLが自動でセットされます。**Drive スコープを追加したため、初回は再認可が必要**（下記） |
+| `uploadCover` で権限エラー / 401 | `appsscript.json` に Drive スコープ（`.../auth/drive`）を追加済み。GASエディタで任意の関数を一度実行して**再認可**し、Web App を**新バージョンで再デプロイ**してください |
