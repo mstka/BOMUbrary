@@ -394,6 +394,19 @@ function setup() {
 }
 
 /**
+ * スコープ再認可用。マニフェストにスコープを追加した後、これを一度実行すると
+ * Drive を含む全スコープの同意画面が出る。承認すればアプリ側の uploadCover 等が動く。
+ * 実行後は Web App を「新バージョン」で再デプロイすること。
+ */
+function authorize() {
+  // Drive を実際に触ることで Drive スコープを要求。マニフェスト宣言済みの
+  // 他スコープも同意画面にまとめて出るため、これ一つで再認可できる。
+  DriveApp.getStorageUsed();
+  Logger.log('認可完了: Drive を含む全スコープを承認しました。新バージョンで再デプロイしてください。');
+  return 'authorized';
+}
+
+/**
  * 表紙解決の動作確認。GASエディタで実行し、ログの cover_url を見る。
  * - cover.openbd.jp / books.google なら最新コード（正常）
  * - ndlsearch.ndl.go.jp/thumbnail なら「保存中のコードが旧版」→ Domain.gs を貼り直す
